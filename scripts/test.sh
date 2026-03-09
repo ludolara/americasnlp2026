@@ -12,7 +12,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
 # --model-name-or-path outputs/tiny-aya-global-wixarika-grpo/checkpoint-750 \
 
 "$ROOT_DIR/wixarika/bin/python" -m test.chrf_eval \
-  --model-name-or-path outputs/tiny-aya-global-wixarika-grpo/checkpoint-750 \
+  --model-name-or-path outputs/tiny-aya-wixarika \
   --dataset-path data/wixarika_spanish_hf \
   --split validation \
   --batch-size 512 \

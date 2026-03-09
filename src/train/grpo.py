@@ -10,7 +10,13 @@ from typing import Any
 
 import torch
 from sacrebleu.metrics import CHRF
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, set_seed
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    EarlyStoppingCallback,
+    Trainer,
+    set_seed,
+)
 from trl import GRPOConfig, GRPOTrainer
 from trl.trainer.grpo_trainer import (
     FSDP,
@@ -39,6 +45,7 @@ def parse_args() -> argparse.Namespace:
 def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
     params = inspect.signature(GRPOConfig.__init__).parameters
     strategy = "steps" if has_eval else "no"
+    load_best_model = has_eval and cfg.early_stopping_patience is not None
     kwargs = {
         "output_dir": cfg.output_dir,
         "per_device_train_batch_size": cfg.per_device_train_batch_size,
@@ -56,6 +63,9 @@ def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
         "eval_strategy": strategy,
         "save_strategy": "steps",
         "save_total_limit": cfg.save_total_limit,
+        "load_best_model_at_end": load_best_model,
+        "metric_for_best_model": "eval_loss" if load_best_model else None,
+        "greater_is_better": False if load_best_model else None,
         "bf16": cfg.bf16,
         "fp16": cfg.fp16,
         "gradient_checkpointing": cfg.gradient_checkpointing,
@@ -72,6 +82,18 @@ def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
 
     filtered = {k: v for k, v in kwargs.items() if k in params and v is not None}
     return GRPOConfig(**filtered)
+
+
+def _build_callbacks(cfg, has_eval: bool):
+    if cfg.early_stopping_patience is None:
+        return []
+    if not has_eval:
+        raise ValueError("early_stopping_patience requires an eval split or eval file")
+    if cfg.save_steps % cfg.eval_steps != 0:
+        raise ValueError(
+            "early_stopping_patience requires save_steps to be a multiple of eval_steps"
+        )
+    return [EarlyStoppingCallback(early_stopping_patience=cfg.early_stopping_patience)]
 
 
 class PatchedGRPOTrainer(GRPOTrainer):
@@ -199,7 +221,9 @@ def main() -> None:
 
     raw = load_datasets(cfg)
     train_dataset, eval_dataset = prepare_grpo_splits(raw=raw, config=cfg)
-    training_args = _build_grpo_args(cfg, has_eval=eval_dataset is not None)
+    has_eval = eval_dataset is not None
+    training_args = _build_grpo_args(cfg, has_eval=has_eval)
+    callbacks = _build_callbacks(cfg, has_eval=has_eval)
 
     trainer = PatchedGRPOTrainer(
         model=model,
@@ -208,6 +232,7 @@ def main() -> None:
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tokenizer,
+        callbacks=callbacks,
     )
 
     output_dir = Path(cfg.output_dir)

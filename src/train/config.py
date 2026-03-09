@@ -79,6 +79,7 @@ class GRPOTrainConfig(DatasetConfigMixin):
     save_steps: int = 50
     eval_steps: int = 50
     save_total_limit: int = 2
+    early_stopping_patience: int | None = None
 
     bf16: bool = True
     fp16: bool = False
