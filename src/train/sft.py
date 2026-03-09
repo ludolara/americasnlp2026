@@ -20,13 +20,13 @@ try:
 except ImportError:
     SFTConfig = None  # type: ignore[assignment]
 
-from train.config import load_config, pretty_config
-from train.data import load_datasets, prepare_splits
+from train.config import load_sft_config, pretty_config
+from train.data import load_datasets, prepare_sft_splits
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Full fine-tuning (SFT) for Tiny Aya base model"
+        description="Full fine-tuning (SFT) for the translation model"
     )
     parser.add_argument(
         "--config",
@@ -92,7 +92,7 @@ def _build_callbacks(cfg, has_eval: bool):
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
+    cfg = load_sft_config(args.config)
 
     set_seed(cfg.seed)
 
@@ -105,23 +105,23 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = None
+    model_dtype = None
     if cfg.bf16:
-        dtype = torch.bfloat16
+        model_dtype = torch.bfloat16
     elif cfg.fp16:
-        dtype = torch.float16
+        model_dtype = torch.float16
 
     model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name_or_path,
         trust_remote_code=cfg.trust_remote_code,
-        dtype=dtype,
+        dtype=model_dtype,
     )
 
     if cfg.gradient_checkpointing:
         model.config.use_cache = False
 
     raw = load_datasets(cfg)
-    train_dataset, eval_dataset = prepare_splits(
+    train_dataset, eval_dataset = prepare_sft_splits(
         raw=raw,
         config=cfg,
         eos_token=tokenizer.eos_token or "",

@@ -65,6 +65,16 @@ def parse_args() -> argparse.Namespace:
         help="Batch size used for generation.",
     )
     parser.add_argument(
+        "--generation-budget",
+        type=int,
+        default=1,
+        help=(
+            "Number of candidate generations to sample per example. "
+            "When greater than 1, the evaluator runs best-of-n selection "
+            "using sentence-level chrF++ against the reference."
+        ),
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -127,14 +137,18 @@ def extract_assistant_response(text: str) -> str:
     return cleaned
 
 
-def generate_predictions(
+def generate_prediction_candidates(
     model_name_or_path: str,
     prompts: list[str],
     batch_size: int,
     max_new_tokens: int,
-) -> list[str]:
+    generation_budget: int,
+) -> list[list[str]]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    if generation_budget < 1:
+        raise ValueError("--generation-budget must be at least 1.")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)
     if tokenizer.pad_token is None:
@@ -145,14 +159,19 @@ def generate_predictions(
     model.to(device)
     model.eval()
 
-    predictions: list[str] = []
-    prompt_batches = batched(prompts, batch_size)
-    for prompt_batch in maybe_tqdm(
-        prompt_batches,
-        total=len(prompt_batches),
+    candidates: list[list[str]] = [[] for _ in prompts]
+    generation_tasks = [
+        (round_index, batch_start)
+        for round_index in range(generation_budget)
+        for batch_start in range(0, len(prompts), batch_size)
+    ]
+    for _, batch_start in maybe_tqdm(
+        generation_tasks,
+        total=len(generation_tasks),
         desc="Generating translations",
         unit="batch",
     ):
+        prompt_batch = prompts[batch_start : batch_start + batch_size]
         encoded = tokenizer(
             prompt_batch,
             return_tensors="pt",
@@ -165,43 +184,56 @@ def generate_predictions(
             generated = model.generate(
                 **encoded,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
+                do_sample=generation_budget > 1,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
             )
 
         prompt_lengths = encoded["attention_mask"].sum(dim=1).tolist()
-        for sequence, prompt_len in zip(generated, prompt_lengths, strict=True):
+        for offset, (sequence, prompt_len) in enumerate(
+            zip(generated, prompt_lengths, strict=True)
+        ):
             new_tokens = sequence[int(prompt_len) :].detach().cpu()
             text = tokenizer.decode(new_tokens, skip_special_tokens=True)
             text = extract_assistant_response(text)
-            predictions.append(text)
+            candidates[batch_start + offset].append(text)
 
-    return predictions
+    return candidates
 
 
 def build_records(
     sources: list[str],
     references: list[str],
-    predictions: list[str],
+    prediction_candidates: list[list[str]],
 ) -> list[dict[str, Any]]:
     from sacrebleu.metrics import CHRF
 
     metric = CHRF(word_order=2)
     records: list[dict[str, Any]] = []
-    for source, reference, prediction in maybe_tqdm(
-        zip(sources, references, predictions, strict=True),
-        total=len(predictions),
+    for source, reference, candidates in maybe_tqdm(
+        zip(sources, references, prediction_candidates, strict=True),
+        total=len(prediction_candidates),
         desc="Scoring chrF++",
         unit="example",
     ):
-        sentence_score = metric.sentence_score(prediction, [reference])
+        candidate_scores = [
+            metric.sentence_score(prediction, [reference]).score
+            for prediction in candidates
+        ]
+        best_index, best_score = max(
+            enumerate(candidate_scores),
+            key=lambda item: item[1],
+        )
         records.append(
             {
                 "source": source,
                 "reference": reference,
-                "prediction": prediction,
-                "chrf_pp": sentence_score.score,
+                "prediction": candidates[best_index],
+                "chrf_pp": best_score,
+                "generation_budget": len(candidates),
+                "selected_candidate_index": best_index,
+                "candidate_predictions": candidates,
+                "candidate_chrf_pp": candidate_scores,
             }
         )
     return records
@@ -260,16 +292,18 @@ def main() -> None:
         format_prompt(source, args.source_name, args.target_name) for source in sources
     ]
 
-    predictions = generate_predictions(
+    prediction_candidates = generate_prediction_candidates(
         model_name_or_path=args.model_name_or_path,
         prompts=prompts,
         batch_size=args.batch_size,
         max_new_tokens=args.max_new_tokens,
+        generation_budget=args.generation_budget,
     )
 
+    records = build_records(sources, references, prediction_candidates)
+    predictions = [row["prediction"] for row in records]
     metric = CHRF(word_order=2)
     corpus_score = metric.corpus_score(predictions, [references])
-    records = build_records(sources, references, predictions)
     average_sentence_score = sum(row["chrf_pp"] for row in records) / len(records)
 
     print(
@@ -280,6 +314,7 @@ def main() -> None:
                 "dataset_path": args.dataset_path,
                 "split": args.split,
                 "num_examples": len(records),
+                "generation_budget": args.generation_budget,
                 "corpus_chrf_pp": round(corpus_score.score, 2),
                 "average_sentence_chrf_pp": round(average_sentence_score, 2),
             },

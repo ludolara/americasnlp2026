@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=global
-#SBATCH --output=logs/global_output.log
-#SBATCH --error=logs/global_error.log
+#SBATCH --job-name=global-grpo
+#SBATCH --output=logs/global_grpo_output.log
+#SBATCH --error=logs/global_grpo_error.log
 #SBATCH --gres=gpu:a100
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
@@ -16,4 +16,4 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-./wixarika/bin/python -m train.sft --config configs/tiny_aya_full_sft.yaml
+./wixarika/bin/python -m train.grpo --config configs/tiny_aya_grpo.yaml

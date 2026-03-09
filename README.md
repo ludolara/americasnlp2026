@@ -1,6 +1,10 @@
-# Tiny Aya Full Fine-Tuning with Hugging Face SFT
+# Tiny Aya Translation Training with SFT and GRPO
 
-Minimal codebase to run **full-parameter supervised fine-tuning (SFT)** using `trl.SFTTrainer`.
+Minimal codebase to run:
+
+- supervised fine-tuning (SFT) with `trl.SFTTrainer`
+- GRPO fine-tuning with `trl.GRPOTrainer`
+- chrF++ evaluation for translation checkpoints
 
 ## What this does
 
@@ -35,7 +39,7 @@ Edit `configs/tiny_aya_full_sft.yaml`:
   - `train_file` / `eval_file` (local files)
 - Optional: set `early_stopping_patience` to stop after that many evals without improvement in `eval_loss`
 
-## Run training
+## Run SFT
 
 ```bash
 ./scripts/train.sh
@@ -44,7 +48,21 @@ Edit `configs/tiny_aya_full_sft.yaml`:
 or
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.train --config configs/tiny_aya_full_sft.yaml
+PYTHONPATH=src ./wixarika/bin/python -m train.sft --config configs/tiny_aya_full_sft.yaml
+```
+
+## Run GRPO
+
+The default GRPO config starts from the SFT checkpoint and uses sentence-level `chrF++` as the reward.
+
+```bash
+./scripts/grpo.sh
+```
+
+or
+
+```bash
+PYTHONPATH=src ./wixarika/bin/python -m train.grpo --config configs/tiny_aya_grpo.yaml
 ```
 
 ## Notes for full fine-tuning

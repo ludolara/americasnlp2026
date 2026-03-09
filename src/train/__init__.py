@@ -1,3 +1,3 @@
-"""Training package for Tiny Aya full SFT."""
+"""Training entrypoints for supervised fine-tuning and GRPO."""
 
-__all__ = ["train"]
+__all__ = ["config", "data", "grpo", "sft"]
