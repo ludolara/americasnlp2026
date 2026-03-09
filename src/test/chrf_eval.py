@@ -118,6 +118,15 @@ def maybe_tqdm(
     return tqdm(iterable, total=total, desc=desc, unit=unit)
 
 
+def extract_assistant_response(text: str) -> str:
+    cleaned = text.strip()
+    if "<|assistant|>" in cleaned:
+        cleaned = cleaned.rsplit("<|assistant|>", maxsplit=1)[-1].strip()
+    if "<|user|>" in cleaned:
+        cleaned = cleaned.split("<|user|>", maxsplit=1)[0].strip()
+    return cleaned
+
+
 def generate_predictions(
     model_name_or_path: str,
     prompts: list[str],
@@ -164,7 +173,8 @@ def generate_predictions(
         prompt_lengths = encoded["attention_mask"].sum(dim=1).tolist()
         for sequence, prompt_len in zip(generated, prompt_lengths, strict=True):
             new_tokens = sequence[int(prompt_len) :].detach().cpu()
-            text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+            text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+            text = extract_assistant_response(text)
             predictions.append(text)
 
     return predictions
