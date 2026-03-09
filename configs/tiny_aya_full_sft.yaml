@@ -1,0 +1,31 @@
+model_name_or_path: "models/tiny-aya-global"
+trust_remote_code: false
+local_dataset_path: "data/wixarika_spanish_hf"
+train_split: "train"
+eval_split: "validation"
+
+output_dir: "outputs/tiny-aya-global-wixarika"
+max_seq_length: 2048
+packing: false
+
+per_device_train_batch_size: 32
+per_device_eval_batch_size: 8
+# gradient_accumulation_steps: 16
+learning_rate: 2.0e-5
+num_train_epochs: 30.0
+warmup_steps: 0.03
+weight_decay: 0.01
+lr_scheduler_type: "cosine"
+
+logging_steps: 30
+save_steps: 30
+eval_steps: 30
+save_total_limit: 3
+early_stopping_patience: 3
+
+bf16: true
+fp16: false
+gradient_checkpointing: true
+
+seed: 42
+report_to: "none"

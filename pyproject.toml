@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiny-aya-full-sft"
+version = "0.1.0"
+description = "Full fine-tuning codebase for Tiny Aya with Hugging Face SFTTrainer"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2.0",
+  "transformers>=4.46.0",
+  "datasets>=2.21.0",
+  "accelerate>=0.34.0",
+  "trl>=0.11.0",
+  "pyyaml>=6.0.1",
+  "sacrebleu>=2.4.3",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
