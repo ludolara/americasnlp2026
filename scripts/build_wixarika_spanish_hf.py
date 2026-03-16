@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import shutil
 
-from datasets import Dataset, DatasetDict, Features, Value
+from datasets import Dataset, DatasetDict, Features, Value, concatenate_datasets
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
         "--raw-dir",
         type=Path,
         default=Path("data/wixarika_spanish_raw"),
-        help="Directory containing train/dev .es and .hch files.",
+        help="Directory containing train/dev/test .es and .hch files.",
     )
     parser.add_argument(
         "--output-dir",
@@ -70,6 +70,43 @@ def _build_split(es_path: Path, wix_path: Path, split_name: str, trim: bool) -> 
     return Dataset.from_dict(rows, features=features)
 
 
+def _build_tsv_split(tsv_path: Path, split_name: str, trim: bool) -> Dataset:
+    es_lines: list[str] = []
+    wix_lines: list[str] = []
+
+    with tsv_path.open("r", encoding="utf-8") as f:
+        for line_number, raw_line in enumerate(f, start=1):
+            line = raw_line.rstrip("\n")
+            if trim:
+                line = line.strip()
+            if not line:
+                continue
+
+            parts = line.split("\t")
+            if len(parts) != 2:
+                raise ValueError(
+                    f"{split_name} TSV has malformed row at line {line_number}: "
+                    f"expected 2 tab-separated columns, got {len(parts)}"
+                )
+
+            wix, es = (part.strip() for part in parts) if trim else parts
+            wix_lines.append(wix)
+            es_lines.append(es)
+
+    features = Features(
+        {
+            "es": Value("string"),
+            "wix": Value("string"),
+        }
+    )
+
+    rows = {
+        "es": es_lines,
+        "wix": wix_lines,
+    }
+    return Dataset.from_dict(rows, features=features)
+
+
 def _prepare_output_dir(path: Path, overwrite: bool) -> None:
     if path.exists():
         has_files = any(path.iterdir())
@@ -91,22 +128,31 @@ def main() -> None:
 
     train_es = raw_dir / "train.es"
     train_wix = raw_dir / "train.hch"
+    train_extra_tsv = raw_dir / "extra.wixes.tsv"
     dev_es = raw_dir / "dev.es"
     dev_wix = raw_dir / "dev.hch"
+    test_es = raw_dir / "test.es"
+    test_wix = raw_dir / "test.hch"
 
-    required = [train_es, train_wix, dev_es, dev_wix]
+    required = [train_es, train_wix, train_extra_tsv, dev_es, dev_wix, test_es, test_wix]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
         missing_str = ", ".join(missing)
         raise FileNotFoundError(f"Missing required files: {missing_str}")
 
     train_dataset = _build_split(train_es, train_wix, "train", trim=args.trim)
+    train_extra_dataset = _build_tsv_split(
+        train_extra_tsv, "train extra", trim=args.trim
+    )
+    train_dataset = concatenate_datasets([train_dataset, train_extra_dataset])
     dev_dataset = _build_split(dev_es, dev_wix, "dev", trim=args.trim)
+    test_dataset = _build_split(test_es, test_wix, "test", trim=args.trim)
 
     dataset = DatasetDict(
         {
             "train": train_dataset,
             "validation": dev_dataset,
+            "test": test_dataset,
         }
     )
 

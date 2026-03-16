@@ -64,8 +64,8 @@ def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
         "save_strategy": "steps",
         "save_total_limit": cfg.save_total_limit,
         "load_best_model_at_end": load_best_model,
-        "metric_for_best_model": "eval_loss" if load_best_model else None,
-        "greater_is_better": False if load_best_model else None,
+        "metric_for_best_model": "eval_reward" if load_best_model else None,
+        "greater_is_better": True if load_best_model else None,
         "bf16": cfg.bf16,
         "fp16": cfg.fp16,
         "gradient_checkpointing": cfg.gradient_checkpointing,
@@ -97,6 +97,18 @@ def _build_callbacks(cfg, has_eval: bool):
 
 
 class PatchedGRPOTrainer(GRPOTrainer):
+    def log(self, logs: dict[str, float], start_time: float | None = None) -> None:
+        mode = "train" if self.model.training else "eval"
+        metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}
+
+        # GRPOTrainer computes reward metrics during eval, but upstream only merges them
+        # into a copy of `logs`. Mutating in place keeps them visible to early stopping and
+        # best-model selection, which inspect the original evaluation metrics dict.
+        if mode == "eval":
+            metrics = {f"eval_{key}": val for key, val in metrics.items()}
+        logs.update(metrics)
+        super().log(logs, start_time)
+
     def _generate_single_turn(self, prompts: list):
         if self.use_vllm or self.use_transformers_paged or is_conversational({"prompt": prompts[0]}):
             return super()._generate_single_turn(prompts)

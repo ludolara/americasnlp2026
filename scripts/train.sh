@@ -19,9 +19,17 @@ source "$ROOT_DIR/wixarika/bin/activate"
 ./wixarika/bin/python -m train.sft --config configs/tiny_aya_full_sft.yaml
 
 ./wixarika/bin/python -m test.chrf_eval \
-  --model-name-or-path outputs/tiny-aya-global-wixarika-grpo/checkpoint-750 \
+  --model-name-or-path outputs/tiny-aya-wixarika/ \
   --dataset-path data/wixarika_spanish_hf \
   --split validation \
   --batch-size 512 \
   --generation-budget 10 \
+  --show-examples 
+
+./wixarika/bin/python -m test.chrf_eval \
+  --model-name-or-path outputs/tiny-aya-wixarika/ \
+  --dataset-path data/wixarika_spanish_hf \
+  --split validation \
+  --batch-size 512 \
+  --generation-budget 100 \
   --show-examples 
