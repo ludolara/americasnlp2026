@@ -111,3 +111,9 @@ Print five qualitative generation examples as well:
 ```bash
 ./scripts/test.sh --show-examples
 ```
+
+Evaluate only specific target languages:
+
+```bash
+./scripts/test.sh --languages wixarika
+```

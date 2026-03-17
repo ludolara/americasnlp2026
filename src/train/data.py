@@ -8,6 +8,16 @@ from transformers import PreTrainedTokenizerBase
 
 from train.config import DatasetConfigMixin, GRPOTrainConfig, SFTTrainConfig
 
+_AYA_END_OF_TURN_TOKEN = "<|END_OF_TURN_TOKEN|>"
+_AYA_REQUIRED_CHAT_TOKENS = (
+    "<|START_OF_TURN_TOKEN|>",
+    _AYA_END_OF_TURN_TOKEN,
+    "<|USER_TOKEN|>",
+    "<|CHATBOT_TOKEN|>",
+    "<|SYSTEM_TOKEN|>",
+)
+_AYA_BASE_CHAT_TEMPLATE = """{{ bos_token }}{% for message in messages %}{% set role = message['role']|lower %}<|START_OF_TURN_TOKEN|>{% if role == 'user' %}<|USER_TOKEN|>{{ message['content'] }}{% elif role == 'assistant' or role == 'chatbot' %}<|CHATBOT_TOKEN|>{{ message['content'] }}{% elif role == 'system' %}<|SYSTEM_TOKEN|>{{ message['content'] }}{% else %}{{- raise_exception("Unsupported role: " ~ message['role']) -}}{% endif %}<|END_OF_TURN_TOKEN|>{% endfor %}{% if add_generation_prompt %}<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>{% endif %}"""
+
 
 def load_datasets(config: DatasetConfigMixin) -> DatasetDict:
     if config.local_dataset_path:
@@ -40,16 +50,43 @@ def load_datasets(config: DatasetConfigMixin) -> DatasetDict:
     return load_dataset(extension, data_files=data_files)
 
 
+def _has_token(tokenizer: PreTrainedTokenizerBase, token: str) -> bool:
+    token_id = tokenizer.convert_tokens_to_ids(token)
+    return token_id is not None and token_id != tokenizer.unk_token_id
+
+
+def ensure_chat_template(
+    tokenizer: PreTrainedTokenizerBase | None,
+) -> PreTrainedTokenizerBase:
+    if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
+        raise ValueError(
+            "Tiny Aya formatting requires a tokenizer with `apply_chat_template`."
+        )
+    if getattr(tokenizer, "chat_template", None):
+        return tokenizer
+
+    missing_tokens = [
+        token for token in _AYA_REQUIRED_CHAT_TOKENS if not _has_token(tokenizer, token)
+    ]
+    if missing_tokens:
+        missing = ", ".join(missing_tokens)
+        raise ValueError(
+            "Tokenizer does not define a chat template and is missing Aya turn tokens: "
+            f"{missing}"
+        )
+
+    tokenizer.chat_template = _AYA_BASE_CHAT_TEMPLATE
+    tokenizer.eos_token = _AYA_END_OF_TURN_TOKEN
+    return tokenizer
+
+
 def _apply_chat_template(
     tokenizer: PreTrainedTokenizerBase | None,
     messages: list[dict[str, str]],
     *,
     add_generation_prompt: bool,
 ) -> str:
-    if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
-        raise ValueError(
-            "Tiny Aya formatting requires a tokenizer with `apply_chat_template`."
-        )
+    tokenizer = ensure_chat_template(tokenizer)
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -57,9 +94,11 @@ def _apply_chat_template(
     )
 
 
+def _format_translation_user_text(source: str, target_name: str) -> str:
+    return f"Traduce del español al {target_name}.\n\n{source.strip()}"
+
 def format_translation_prompt(
     source: str,
-    source_name: str,
     target_name: str,
     tokenizer: PreTrainedTokenizerBase | None,
 ) -> str:
@@ -68,13 +107,18 @@ def format_translation_prompt(
         [
             {
                 "role": "user",
-                "content": (
-                    f"Translate from {source_name} to {target_name}.\n\n{source.strip()}"
-                ),
+                "content": _format_translation_user_text(source, target_name),
             }
         ],
         add_generation_prompt=True,
     )
+
+
+def _resolve_target_name(example: Mapping[str, Any]) -> str:
+    target_name = str(example.get("language") or "").strip()
+    if not target_name:
+        raise ValueError("Translation examples must include a non-empty `language` field.")
+    return target_name
 
 
 def _format_instruction_example(
@@ -110,15 +154,13 @@ def _format_translation_example(
 ) -> str:
     source = str(example.get(source_column, "")).strip()
     target = str(example.get(target_column, "")).strip()
-    target_name = str(example.get("language") or "").strip()
-    if not target_name:
-        raise ValueError("Translation SFT examples must include a non-empty `language` field.")
+    target_name = _resolve_target_name(example)
     return _apply_chat_template(
         tokenizer,
         [
             {
                 "role": "user",
-                "content": f"Traduce del español al {target_name}.\n\n{source}",
+                "content": _format_translation_user_text(source, target_name),
             },
             {"role": "assistant", "content": target},
         ],
@@ -244,20 +286,33 @@ def build_grpo_dataset(
         raise ValueError(
             f"Missing columns for GRPO split '{split_name}': {missing}. Available: {available}"
         )
+    if "language" not in columns:
+        raise ValueError(
+            f"Translation GRPO datasets must include a `language` column for prompts in split '{split_name}'."
+        )
 
     def mapper(example: Mapping[str, Any]) -> dict[str, str]:
         source = str(example[config.source_column]).strip()
         reference = str(example[config.target_column]).strip()
-        return {
+        target_name = _resolve_target_name(example)
+        row = {
             "prompt": format_translation_prompt(
                 source,
-                config.source_name,
-                config.target_name,
+                target_name,
                 tokenizer,
             ),
             "source": source,
             "reference": reference,
         }
+        if "language" in example:
+            row["language"] = target_name
+        if "language_code" in example:
+            row["language_code"] = str(example.get("language_code") or "").strip()
+        if "source_type" in example:
+            row["source_type"] = str(example.get("source_type") or "").strip()
+        if "source_tag" in example:
+            row["source_tag"] = str(example.get("source_tag") or "").strip()
+        return row
 
     return dataset.map(
         mapper,

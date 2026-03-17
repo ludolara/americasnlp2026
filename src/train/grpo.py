@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from datasets import Dataset
 from sacrebleu.metrics import CHRF
+from torch.utils.data import Sampler
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -26,7 +28,14 @@ from trl.trainer.grpo_trainer import (
 )
 
 from train.config import load_grpo_config, pretty_config
-from train.data import load_datasets, prepare_grpo_splits
+from train.data import ensure_chat_template, load_datasets, prepare_grpo_splits
+from train.language_sampling import (
+    TemperatureSmoothedRepeatSampler,
+    compute_smoothed_mix,
+    count_languages,
+    extract_languages,
+    format_weighted_mix,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,6 +106,15 @@ def _build_callbacks(cfg, has_eval: bool):
 
 
 class PatchedGRPOTrainer(GRPOTrainer):
+    def __init__(self, *args, train_sampler: Sampler[int] | None = None, **kwargs):
+        self._train_sampler_override = train_sampler
+        super().__init__(*args, **kwargs)
+
+    def _get_train_sampler(self, dataset: Dataset | None = None):
+        if self._train_sampler_override is not None:
+            return self._train_sampler_override
+        return super()._get_train_sampler(dataset)
+
     def log(self, logs: dict[str, float], start_time: float | None = None) -> None:
         mode = "train" if self.model.training else "eval"
         metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}
@@ -208,6 +226,45 @@ def build_chrf_reward():
     return reward_func
 
 
+def _build_train_sampler(
+    dataset: Dataset,
+    *,
+    seed: int,
+    alpha: float,
+    generation_batch_size: int,
+    num_generations: int,
+    repeat_count: int,
+) -> Sampler[int] | None:
+    if "language" not in dataset.column_names:
+        return None
+
+    counts = count_languages(dataset)
+    print(f"Train language mix (raw): {format_weighted_mix(counts)}")
+
+    if alpha == 1.0:
+        print("Using default GRPO sampling because language_sampling_alpha=1.0.")
+        return None
+
+    if len(counts) < 2:
+        return None
+
+    smoothed_mix = compute_smoothed_mix(counts, alpha)
+    print(
+        f"Train language mix (alpha={alpha:.2f}): "
+        f"{format_weighted_mix(smoothed_mix)}"
+    )
+
+    prompt_batch_size = generation_batch_size // num_generations
+    return TemperatureSmoothedRepeatSampler(
+        languages=extract_languages(dataset),
+        seed=seed,
+        alpha=alpha,
+        batch_size=prompt_batch_size,
+        mini_repeat_count=num_generations,
+        repeat_count=repeat_count,
+    )
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_grpo_config(args.config)
@@ -220,6 +277,7 @@ def main() -> None:
         use_fast=True,
         padding_side="left",
     )
+    tokenizer = ensure_chat_template(tokenizer)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
@@ -247,6 +305,14 @@ def main() -> None:
     has_eval = eval_dataset is not None
     training_args = _build_grpo_args(cfg, has_eval=has_eval)
     callbacks = _build_callbacks(cfg, has_eval=has_eval)
+    train_sampler = _build_train_sampler(
+        raw[cfg.train_split],
+        seed=cfg.seed,
+        alpha=cfg.language_sampling_alpha,
+        generation_batch_size=training_args.generation_batch_size,
+        num_generations=training_args.num_generations,
+        repeat_count=training_args.num_iterations * training_args.steps_per_generation,
+    )
 
     trainer = PatchedGRPOTrainer(
         model=model,
@@ -256,6 +322,7 @@ def main() -> None:
         eval_dataset=eval_dataset,
         processing_class=tokenizer,
         callbacks=callbacks,
+        train_sampler=train_sampler,
     )
 
     output_dir = Path(cfg.output_dir)

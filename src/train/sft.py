@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
-from collections.abc import Iterator
 import inspect
 import json
 from pathlib import Path
-import random
 
 import torch
 from datasets import Dataset
@@ -26,47 +23,14 @@ except ImportError:
     SFTConfig = None  # type: ignore[assignment]
 
 from train.config import load_sft_config, pretty_config
-from train.data import load_datasets, prepare_sft_splits
-
-
-class TemperatureSmoothedLanguageSampler(Sampler[int]):
-    """Resamples examples by language using p(lang) proportional to count(lang)^alpha."""
-
-    def __init__(
-        self,
-        languages: list[str],
-        seed: int,
-        alpha: float,
-        epoch_size: int,
-    ) -> None:
-        self.seed = seed
-        self.alpha = alpha
-        self.epoch_size = epoch_size
-        self.epoch = 0
-        self.language_to_indices: dict[str, list[int]] = defaultdict(list)
-        for index, language in enumerate(languages):
-            self.language_to_indices[language].append(index)
-        self.language_weights = {
-            language: len(indices) ** self.alpha
-            for language, indices in self.language_to_indices.items()
-        }
-
-    def __len__(self) -> int:
-        return self.epoch_size
-
-    def set_epoch(self, epoch: int) -> None:
-        self.epoch = epoch
-
-    def __iter__(self) -> Iterator[int]:
-        rng = random.Random(self.seed + self.epoch)
-        languages = tuple(self.language_weights.keys())
-        weights = tuple(self.language_weights[language] for language in languages)
-
-        for _ in range(self.epoch_size):
-            language = rng.choices(languages, weights=weights, k=1)[0]
-            yield rng.choice(self.language_to_indices[language])
-
-        self.epoch += 1
+from train.data import ensure_chat_template, load_datasets, prepare_sft_splits
+from train.language_sampling import (
+    TemperatureSmoothedLanguageSampler,
+    compute_smoothed_mix,
+    count_languages,
+    extract_languages,
+    format_weighted_mix,
+)
 
 
 class MultilingualSFTTrainer(SFTTrainer):
@@ -74,10 +38,10 @@ class MultilingualSFTTrainer(SFTTrainer):
         self._train_sampler_override = train_sampler
         super().__init__(*args, **kwargs)
 
-    def _get_train_sampler(self):
+    def _get_train_sampler(self, train_dataset: Dataset | None = None):
         if self._train_sampler_override is not None:
             return self._train_sampler_override
-        return super()._get_train_sampler()
+        return super()._get_train_sampler(train_dataset)
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,21 +110,6 @@ def _build_callbacks(cfg, has_eval: bool):
     return [EarlyStoppingCallback(early_stopping_patience=cfg.early_stopping_patience)]
 
 
-def _format_weighted_mix(weights: Counter[str] | dict[str, float]) -> str:
-    total = sum(weights.values())
-    return ", ".join(
-        f"{language}={value / total:.1%}"
-        for language, value in sorted(weights.items())
-    )
-
-
-def _compute_smoothed_mix(counts: Counter[str], alpha: float) -> dict[str, float]:
-    return {
-        language: count ** alpha
-        for language, count in counts.items()
-    }
-
-
 def _build_train_sampler(
     dataset: Dataset,
     *,
@@ -172,8 +121,8 @@ def _build_train_sampler(
     if "language" not in dataset.column_names:
         return None
 
-    counts = Counter(str(language).strip() for language in dataset["language"])
-    print(f"Train language mix (raw): {_format_weighted_mix(counts)}")
+    counts = count_languages(dataset)
+    print(f"Train language mix (raw): {format_weighted_mix(counts)}")
 
     if packing:
         print("Skipping alpha-smoothed sampler because packing=True changes dataset length.")
@@ -187,14 +136,14 @@ def _build_train_sampler(
         print("Using default shuffled sampling because language_sampling_alpha=1.0.")
         return None
 
-    languages = [str(language).strip() for language in dataset["language"]]
+    languages = extract_languages(dataset)
     if len(counts) < 2:
         return None
 
-    smoothed_mix = _compute_smoothed_mix(counts, alpha)
+    smoothed_mix = compute_smoothed_mix(counts, alpha)
     print(
         f"Train language mix (alpha={alpha:.2f}): "
-        f"{_format_weighted_mix(smoothed_mix)}"
+        f"{format_weighted_mix(smoothed_mix)}"
     )
 
     return TemperatureSmoothedLanguageSampler(
@@ -216,6 +165,7 @@ def main() -> None:
         trust_remote_code=cfg.trust_remote_code,
         use_fast=True,
     )
+    tokenizer = ensure_chat_template(tokenizer)
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

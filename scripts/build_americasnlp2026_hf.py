@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data/amerciasnlp2026"),
+        default=Path("data/americasnlp2026"),
         help="Where to save the Hugging Face dataset (save_to_disk).",
     )
     parser.add_argument(
@@ -290,14 +290,14 @@ def main() -> None:
             wixarika_dir / "train.hch",
             split_name="train",
             language="wixarika",
-            language_code="wix",
+            language_code="hch",
             trim=args.trim,
         ),
         _build_tsv_split(
             wixarika_dir / "extra.tsv",
             split_name="wixarika extra",
             language="wixarika",
-            language_code="wix",
+            language_code="hch",
             source_type="extra",
             trim=args.trim,
         ),
@@ -305,7 +305,7 @@ def main() -> None:
             wixarika_dir / "synthetic.tsv",
             split_name="wixarika synthetic",
             language="wixarika",
-            language_code="wix",
+            language_code="hch",
             source_type="synthetic",
             trim=args.trim,
         ),
@@ -330,7 +330,7 @@ def main() -> None:
             maya_dir / "train.maya",
             split_name="train",
             language="maya",
-            language_code="maya",
+            language_code="myn",
             trim=args.trim,
         ),
     ]
@@ -341,7 +341,7 @@ def main() -> None:
             wixarika_dir / "dev.hch",
             split_name="dev",
             language="wixarika",
-            language_code="wix",
+            language_code="hch",
             trim=args.trim,
         ),
         _build_parallel_split(
@@ -365,7 +365,7 @@ def main() -> None:
             maya_dir / "dev.maya",
             split_name="dev",
             language="maya",
-            language_code="maya",
+            language_code="myn",
             trim=args.trim,
         ),
     ]
@@ -375,7 +375,7 @@ def main() -> None:
         (
             wixarika_dir,
             "wixarika",
-            "wix",
+            "hch",
             "hch",
         ),
         (
@@ -393,7 +393,7 @@ def main() -> None:
         (
             maya_dir,
             "maya",
-            "maya",
+            "myn",
             "maya",
         ),
     ]

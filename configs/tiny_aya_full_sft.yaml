@@ -1,12 +1,11 @@
-model_name_or_path: "models/tiny-aya-global"
-trust_remote_code: false
-local_dataset_path: "data/amerciasnlp2026"
+model_name_or_path: "models/tiny-aya-base"
+local_dataset_path: "data/americasnlp2026"
 train_split: "train"
 eval_split: "validation"
 source_column: "es"
 target_column: "target"
 
-output_dir: "outputs/tiny-aya-americas"
+output_dir: "outputs/tiny-aya-americas-base"
 max_seq_length: 256
 packing: false
 language_sampling_alpha: 0.3
@@ -16,15 +15,15 @@ per_device_eval_batch_size: 8
 # gradient_accumulation_steps: 2
 learning_rate: 2.0e-5
 num_train_epochs: 60.0
-warmup_steps: 0.03
-weight_decay: 0.01
+# warmup_steps: 0.03
+# weight_decay: 0.01
 lr_scheduler_type: "linear"
 
-logging_steps: 15
-save_steps: 30
-eval_steps: 30
+logging_steps: 25
+save_steps: 50
+eval_steps: 50
 save_total_limit: 3
-early_stopping_patience: 3
+early_stopping_patience: 2
 
 bf16: true
 fp16: false
