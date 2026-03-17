@@ -165,9 +165,20 @@ def generate_prediction_candidates(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
+    if torch.cuda.is_available():
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            device_map="auto",
+            torch_dtype="auto",
+        )
+        input_device = model.get_input_embeddings().weight.device
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path,
+            torch_dtype="auto",
+        )
+        input_device = torch.device("cpu")
+        model.to(input_device)
     model.eval()
 
     candidates: list[list[str]] = [[] for _ in prompts]
@@ -189,7 +200,7 @@ def generate_prediction_candidates(
             padding=True,
             truncation=True,
         )
-        encoded = {name: tensor.to(device) for name, tensor in encoded.items()}
+        encoded = {name: tensor.to(input_device) for name, tensor in encoded.items()}
 
         with torch.no_grad():
             generated = model.generate(
@@ -397,7 +408,6 @@ def main() -> None:
                 "model_name_or_path": args.model_name_or_path,
                 "dataset_path": args.dataset_path,
                 "split": args.split,
-                "languages": args.languages,
                 "generation_budget": args.generation_budget,
                 "per_language": per_language_summary,
                 "total": total_summary,

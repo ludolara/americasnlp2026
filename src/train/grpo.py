@@ -102,7 +102,12 @@ def _build_callbacks(cfg, has_eval: bool):
         raise ValueError(
             "early_stopping_patience requires save_steps to be a multiple of eval_steps"
         )
-    return [EarlyStoppingCallback(early_stopping_patience=cfg.early_stopping_patience)]
+    callback_kwargs = {
+        "early_stopping_patience": cfg.early_stopping_patience,
+    }
+    if cfg.early_stopping_threshold is not None:
+        callback_kwargs["early_stopping_threshold"] = cfg.early_stopping_threshold
+    return [EarlyStoppingCallback(**callback_kwargs)]
 
 
 class PatchedGRPOTrainer(GRPOTrainer):

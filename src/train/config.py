@@ -49,6 +49,7 @@ class SFTTrainConfig(DatasetConfigMixin):
     eval_steps: int = 200
     save_total_limit: int = 3
     early_stopping_patience: int | None = None
+    early_stopping_threshold: float | None = None
 
     bf16: bool = True
     fp16: bool = False
@@ -80,6 +81,7 @@ class GRPOTrainConfig(DatasetConfigMixin):
     eval_steps: int = 50
     save_total_limit: int = 2
     early_stopping_patience: int | None = None
+    early_stopping_threshold: float | None = None
 
     bf16: bool = True
     fp16: bool = False
@@ -120,6 +122,10 @@ def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
     patience = raw.get("early_stopping_patience")
     if patience is not None and patience < 1:
         raise ValueError("early_stopping_patience must be >= 1 when set")
+
+    threshold = raw.get("early_stopping_threshold")
+    if threshold is not None and threshold < 0:
+        raise ValueError("early_stopping_threshold must be >= 0 when set")
 
     language_sampling_alpha = raw.get("language_sampling_alpha")
     if language_sampling_alpha is not None and language_sampling_alpha < 0:

@@ -7,6 +7,7 @@ import shutil
 
 
 SPLITS = ("train", "dev", "test")
+DEV_TEST_TOTAL_LIMIT = 1000
 
 
 def parse_args() -> argparse.Namespace:
@@ -179,6 +180,153 @@ def _load_split_for_language(
     return filtered_es_lines, filtered_target_lines
 
 
+def _collect_language_splits(
+    *,
+    source_root: Path,
+    language_code: str,
+    trim: bool,
+) -> dict[str, tuple[list[str], list[str]]]:
+    collected: dict[str, tuple[list[str], list[str]]] = {}
+    for split_name in SPLITS:
+        loaded = _load_split_for_language(
+            source_root=source_root,
+            language_code=language_code,
+            split_name=split_name,
+            trim=trim,
+        )
+        if loaded is not None:
+            collected[split_name] = loaded
+    return collected
+
+
+def _slice_pair(
+    pair: tuple[list[str], list[str]],
+    limit: int,
+) -> tuple[list[str], list[str]]:
+    es_lines, target_lines = pair
+    return es_lines[:limit], target_lines[:limit]
+
+
+def _allocate_evenly(
+    *,
+    available_by_language: dict[str, int],
+    total_limit: int,
+    language_order: list[str],
+) -> dict[str, int]:
+    allocations = {language_code: 0 for language_code in available_by_language}
+    remaining = min(total_limit, sum(available_by_language.values()))
+    active_languages = [
+        language_code
+        for language_code in language_order
+        if available_by_language.get(language_code, 0) > 0
+    ]
+
+    while remaining > 0 and active_languages:
+        base_share, remainder = divmod(remaining, len(active_languages))
+        for index, language_code in enumerate(active_languages):
+            requested = base_share + (1 if index < remainder else 0)
+            capacity = available_by_language[language_code] - allocations[language_code]
+            granted = min(requested, capacity)
+            allocations[language_code] += granted
+
+        remaining = min(total_limit, sum(available_by_language.values())) - sum(allocations.values())
+        active_languages = [
+            language_code
+            for language_code in active_languages
+            if allocations[language_code] < available_by_language[language_code]
+        ]
+
+    return allocations
+
+
+def _build_output_splits(
+    *,
+    source_root: Path,
+    languages: list[str],
+    trim: bool,
+) -> tuple[
+    dict[str, tuple[list[str], list[str]]],
+    dict[str, list[tuple[str, int]]],
+]:
+    combined: dict[str, tuple[list[str], list[str]]] = {
+        split_name: ([], []) for split_name in SPLITS
+    }
+    counts: dict[str, list[tuple[str, int]]] = {split_name: [] for split_name in SPLITS}
+    language_splits_by_language = {
+        language_code: _collect_language_splits(
+            source_root=source_root,
+            language_code=language_code,
+            trim=trim,
+        )
+        for language_code in languages
+    }
+    non_itz_languages = [language_code for language_code in languages if language_code != "itz"]
+    capped_split_allocations = {
+        split_name: _allocate_evenly(
+            available_by_language={
+                language_code: len(language_splits_by_language[language_code].get(split_name, ([], []))[0])
+                for language_code in non_itz_languages
+            },
+            total_limit=DEV_TEST_TOTAL_LIMIT,
+            language_order=non_itz_languages,
+        )
+        for split_name in ("dev", "test")
+    }
+
+    for language_code in languages:
+        language_splits = language_splits_by_language[language_code]
+
+        if language_code == "itz":
+            itz_train_es, itz_train_target = combined["train"]
+            total_rows = 0
+            for split_name in SPLITS:
+                pair = language_splits.get(split_name)
+                if pair is None:
+                    continue
+                es_lines, target_lines = pair
+                itz_train_es.extend(es_lines)
+                itz_train_target.extend(target_lines)
+                total_rows += len(es_lines)
+            if total_rows:
+                counts["train"].append((language_code, total_rows))
+            continue
+
+        train_total = 0
+        train_pair = language_splits.get("train")
+        if train_pair is not None:
+            train_es_lines, train_target_lines = train_pair
+            combined_train_es, combined_train_target = combined["train"]
+            combined_train_es.extend(train_es_lines)
+            combined_train_target.extend(train_target_lines)
+            train_total += len(train_es_lines)
+
+        for split_name in SPLITS:
+            if split_name == "train":
+                continue
+            pair = language_splits.get(split_name)
+            if pair is None:
+                continue
+            assigned_count = capped_split_allocations[split_name].get(language_code, 0)
+            es_lines, target_lines = _slice_pair(pair, assigned_count)
+            remaining_es_lines, remaining_target_lines = pair[0][assigned_count:], pair[1][assigned_count:]
+
+            split_es_lines, split_target_lines = combined[split_name]
+            split_es_lines.extend(es_lines)
+            split_target_lines.extend(target_lines)
+            counts[split_name].append((language_code, len(es_lines)))
+
+            if remaining_es_lines:
+                combined_train_es, combined_train_target = combined["train"]
+                combined_train_es.extend(remaining_es_lines)
+                combined_train_target.extend(remaining_target_lines)
+                train_total += len(remaining_es_lines)
+
+        if train_total:
+            counts["train"].append((language_code, train_total))
+
+    return combined, counts
+
+
 def _write_split(
     *,
     split_name: str,
@@ -215,6 +363,9 @@ def _write_readme(output_dir: Path, languages: list[str], target_suffix: str) ->
             "- Spanish source lines have their leading `#lang#` prefixes removed.",
             '- Records where either side is empty or `""` are dropped.',
             "- Records where the Spanish side is only punctuation or symbols are dropped.",
+            f"- `itz` contributes all available examples to `train`, even without a train folder.",
+            f"- Non-`itz` `dev` and `test` splits are each capped at {DEV_TEST_TOTAL_LIMIT} total examples.",
+            "- Those non-`itz` `dev` and `test` examples are distributed as evenly as possible across languages, and leftover examples are moved to `train`.",
             "",
         ]
     )
@@ -238,27 +389,14 @@ def main() -> None:
 
     print(f"Converting {len(languages)} languages from: {source_root}")
     print(f"Writing combined corpus to: {output_dir}")
+    combined_splits, split_counts = _build_output_splits(
+        source_root=source_root,
+        languages=languages,
+        trim=args.trim,
+    )
 
     for split_name in SPLITS:
-        split_es_lines: list[str] = []
-        split_target_lines: list[str] = []
-        language_counts: list[tuple[str, int]] = []
-
-        for language_code in languages:
-            loaded = _load_split_for_language(
-                source_root=source_root,
-                language_code=language_code,
-                split_name=split_name,
-                trim=args.trim,
-            )
-            if loaded is None:
-                continue
-
-            es_lines, target_lines = loaded
-            split_es_lines.extend(es_lines)
-            split_target_lines.extend(target_lines)
-            language_counts.append((language_code, len(es_lines)))
-
+        split_es_lines, split_target_lines = combined_splits[split_name]
         _write_split(
             split_name=split_name,
             output_dir=output_dir,
@@ -267,6 +405,7 @@ def main() -> None:
             target_lines=split_target_lines,
         )
 
+        language_counts = split_counts[split_name]
         if language_counts:
             counts_str = ", ".join(
                 f"{language_code}={row_count}" for language_code, row_count in language_counts

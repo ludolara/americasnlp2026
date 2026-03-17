@@ -38,6 +38,7 @@ Edit `configs/tiny_aya_full_sft.yaml`:
   - `dataset_name` (HF dataset), or
   - `train_file` / `eval_file` (local files)
 - Optional: set `early_stopping_patience` to stop after that many evals without improvement in `eval_loss`
+- Optional: set `early_stopping_threshold` to require a minimum `eval_loss` improvement before patience resets
 
 ## Run SFT
 
