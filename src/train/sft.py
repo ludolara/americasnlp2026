@@ -25,6 +25,7 @@ except ImportError:
 from train.config import load_sft_config, pretty_config
 from train.data import ensure_chat_template, load_datasets, prepare_sft_splits
 from train.language_sampling import (
+    DistributedTemperatureSmoothedLanguageSampler,
     TemperatureSmoothedLanguageSampler,
     compute_smoothed_mix,
     count_languages,
@@ -122,6 +123,7 @@ def _build_train_sampler(
     alpha: float,
     packing: bool,
     world_size: int,
+    rank: int,
 ) -> Sampler[int] | None:
     if "language" not in dataset.column_names:
         return None
@@ -131,10 +133,6 @@ def _build_train_sampler(
 
     if packing:
         print("Skipping alpha-smoothed sampler because packing=True changes dataset length.")
-        return None
-
-    if world_size != 1:
-        print("Skipping alpha-smoothed sampler because distributed training is enabled.")
         return None
 
     if alpha == 1.0:
@@ -150,6 +148,20 @@ def _build_train_sampler(
         f"Train language mix (alpha={alpha:.2f}): "
         f"{format_weighted_mix(smoothed_mix)}"
     )
+
+    if world_size != 1:
+        print(
+            f"Using distributed alpha-smoothed sampler "
+            f"(alpha={alpha:.2f}, world_size={world_size}, rank={rank})."
+        )
+        return DistributedTemperatureSmoothedLanguageSampler(
+            languages=languages,
+            seed=seed,
+            alpha=alpha,
+            epoch_size=len(languages),
+            num_replicas=world_size,
+            rank=rank,
+        )
 
     return TemperatureSmoothedLanguageSampler(
         languages=languages,
@@ -206,6 +218,7 @@ def main() -> None:
         alpha=cfg.language_sampling_alpha,
         packing=cfg.packing,
         world_size=getattr(training_args, "world_size", 1),
+        rank=getattr(training_args, "process_index", 0),
     )
 
     trainer_kwargs = {

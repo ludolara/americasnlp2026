@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,6 +18,20 @@ _AYA_REQUIRED_CHAT_TOKENS = (
     "<|SYSTEM_TOKEN|>",
 )
 _AYA_BASE_CHAT_TEMPLATE = """{{ bos_token }}{% for message in messages %}{% set role = message['role']|lower %}<|START_OF_TURN_TOKEN|>{% if role == 'user' %}<|USER_TOKEN|>{{ message['content'] }}{% elif role == 'assistant' or role == 'chatbot' %}<|CHATBOT_TOKEN|>{{ message['content'] }}{% elif role == 'system' %}<|SYSTEM_TOKEN|>{{ message['content'] }}{% else %}{{- raise_exception("Unsupported role: " ~ message['role']) -}}{% endif %}<|END_OF_TURN_TOKEN|>{% endfor %}{% if add_generation_prompt %}<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>{% endif %}"""
+
+
+def _distributed_map_kwargs() -> dict[str, Any]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return {}
+
+    # DDP ranks can race on the same Hugging Face Arrow cache file when mapping a
+    # dataset loaded from disk. Keeping the mapped dataset in memory avoids the
+    # shared on-disk cache path entirely.
+    return {
+        "keep_in_memory": True,
+        "load_from_cache_file": False,
+    }
 
 
 def load_datasets(config: DatasetConfigMixin) -> DatasetDict:
@@ -236,6 +251,7 @@ def build_text_dataset(
         mapper,
         remove_columns=dataset.column_names,
         desc=f"Formatting {split_name} split to text",
+        **_distributed_map_kwargs(),
     )
 
 
@@ -318,6 +334,7 @@ def build_grpo_dataset(
         mapper,
         remove_columns=dataset.column_names,
         desc=f"Formatting {split_name} split for GRPO",
+        **_distributed_map_kwargs(),
     )
 
 

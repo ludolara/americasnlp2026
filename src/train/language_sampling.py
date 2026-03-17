@@ -73,6 +73,61 @@ class TemperatureSmoothedLanguageSampler(Sampler[int]):
         self.epoch += 1
 
 
+class DistributedTemperatureSmoothedLanguageSampler(Sampler[int]):
+    """DDP-safe language sampler that shards a shared alpha-smoothed stream by rank."""
+
+    def __init__(
+        self,
+        languages: list[str],
+        seed: int,
+        alpha: float,
+        epoch_size: int,
+        *,
+        num_replicas: int,
+        rank: int,
+    ) -> None:
+        if num_replicas < 1:
+            raise ValueError("num_replicas must be >= 1.")
+        if rank < 0 or rank >= num_replicas:
+            raise ValueError("rank must be in [0, num_replicas).")
+
+        self.seed = seed
+        self.alpha = alpha
+        self.epoch_size = epoch_size
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+        self.language_to_indices: dict[str, list[int]] = defaultdict(list)
+        for index, language in enumerate(languages):
+            self.language_to_indices[language].append(index)
+        self.language_weights = {
+            language: len(indices) ** self.alpha
+            for language, indices in self.language_to_indices.items()
+        }
+
+        self.num_samples = (self.epoch_size + self.num_replicas - 1) // self.num_replicas
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __iter__(self) -> Iterator[int]:
+        rng = random.Random(self.seed + self.epoch)
+        languages = tuple(self.language_weights.keys())
+        weights = tuple(self.language_weights[language] for language in languages)
+
+        for draw_index in range(self.total_size):
+            language = rng.choices(languages, weights=weights, k=1)[0]
+            index = rng.choice(self.language_to_indices[language])
+            if draw_index % self.num_replicas == self.rank:
+                yield index
+
+        self.epoch += 1
+
+
 class TemperatureSmoothedRepeatSampler(Sampler[int]):
     """Samples GRPO prompt groups by language before applying TRL's repeat pattern."""
 
