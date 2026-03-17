@@ -8,7 +8,7 @@ from typing import Any
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run SacreBLEU chrF++ evaluation on a dataset split."
+        description="Run SacreBLEU evaluation on a dataset split."
     )
     parser.add_argument(
         "--model-name-or-path",
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
         "--output-file",
         type=Path,
         default=None,
-        help="Optional JSONL path for per-example predictions and chrF++ scores.",
+        help="Optional JSONL path for per-example predictions and sentence-level chrF++ scores.",
     )
     parser.add_argument(
         "--show-examples",
@@ -107,10 +107,6 @@ def format_prompt(source: str, source_name: str, target_name: str) -> str:
         f"{source.strip()}\n"
         "<|assistant|>\n"
     )
-
-
-def batched(items: list[str], batch_size: int) -> list[list[str]]:
-    return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
 def maybe_tqdm(
@@ -161,11 +157,11 @@ def generate_prediction_candidates(
 
     candidates: list[list[str]] = [[] for _ in prompts]
     generation_tasks = [
-        (round_index, batch_start)
-        for round_index in range(generation_budget)
+        batch_start
+        for _ in range(generation_budget)
         for batch_start in range(0, len(prompts), batch_size)
     ]
-    for _, batch_start in maybe_tqdm(
+    for batch_start in maybe_tqdm(
         generation_tasks,
         total=len(generation_tasks),
         desc="Generating translations",
@@ -263,7 +259,7 @@ def main() -> None:
     args = parse_args()
 
     from datasets import load_from_disk
-    from sacrebleu.metrics import CHRF
+    from sacrebleu.metrics import BLEU, CHRF
 
     dataset = load_from_disk(args.dataset_path)
     if args.split not in dataset:
@@ -302,21 +298,21 @@ def main() -> None:
 
     records = build_records(sources, references, prediction_candidates)
     predictions = [row["prediction"] for row in records]
-    metric = CHRF(word_order=2)
-    corpus_score = metric.corpus_score(predictions, [references])
-    average_sentence_score = sum(row["chrf_pp"] for row in records) / len(records)
+    bleu_score = BLEU().corpus_score(predictions, [references])
+    chrf_score = CHRF().corpus_score(predictions, [references])
+    chrf_pp_score = CHRF(word_order=2).corpus_score(predictions, [references])
 
     print(
         json.dumps(
             {
-                "metric": "chrF++",
                 "model_name_or_path": args.model_name_or_path,
                 "dataset_path": args.dataset_path,
                 "split": args.split,
                 "num_examples": len(records),
                 "generation_budget": args.generation_budget,
-                "corpus_chrf_pp": round(corpus_score.score, 2),
-                "average_sentence_chrf_pp": round(average_sentence_score, 2),
+                "bleu": round(bleu_score.score, 2),
+                "chrf": round(chrf_score.score, 2),
+                "chrf_pp": round(chrf_pp_score.score, 2),
             },
             indent=2,
         )

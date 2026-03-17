@@ -18,7 +18,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
 
 ./wixarika/bin/python -m train.sft --config configs/tiny_aya_full_sft.yaml
 
-./wixarika/bin/python -m test.chrf_eval \
+./wixarika/bin/python -m test.eval \
   --model-name-or-path outputs/tiny-aya-wixarika/ \
   --dataset-path data/wixarika_spanish_hf \
   --split validation \
@@ -26,7 +26,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
   --generation-budget 10 \
   --show-examples 
 
-./wixarika/bin/python -m test.chrf_eval \
+./wixarika/bin/python -m test.eval \
   --model-name-or-path outputs/tiny-aya-wixarika/ \
   --dataset-path data/wixarika_spanish_hf \
   --split validation \

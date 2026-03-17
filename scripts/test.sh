@@ -20,7 +20,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
 # --model-name-or-path outputs/tiny-aya-base-wixarika/checkpoint-510 \
 # --model-name-or-path outputs/tiny-aya-global-wixarika-grpo/checkpoint-750 \
 
-"$ROOT_DIR/wixarika/bin/python" -m test.chrf_eval \
+"$ROOT_DIR/wixarika/bin/python" -m test.eval \
   --model-name-or-path outputs/tiny-aya-wixarika\
   --dataset-path data/wixarika_spanish_hf \
   --split test \
@@ -28,7 +28,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
   --generation-budget 10 \
   --show-examples 
 
-"$ROOT_DIR/wixarika/bin/python" -m test.chrf_eval \
+"$ROOT_DIR/wixarika/bin/python" -m test.eval \
   --model-name-or-path outputs/tiny-aya-wixarika \
   --dataset-path data/wixarika_spanish_hf \
   --split test \

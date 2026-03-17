@@ -15,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--raw-dir",
         type=Path,
-        default=Path("data/wixarika_spanish_raw"),
+        default=Path("data/wixarika-spanish"),
         help="Directory containing train/dev/test .es and .hch files.",
     )
     parser.add_argument(
@@ -128,7 +128,7 @@ def main() -> None:
 
     train_es = raw_dir / "train.es"
     train_wix = raw_dir / "train.hch"
-    train_extra_tsv = raw_dir / "extra.wixes.tsv"
+    train_extra_tsv = raw_dir / "classes.wixes.tsv"
     dev_es = raw_dir / "dev.es"
     dev_wix = raw_dir / "dev.hch"
     test_es = raw_dir / "test.es"
@@ -141,10 +141,10 @@ def main() -> None:
         raise FileNotFoundError(f"Missing required files: {missing_str}")
 
     train_dataset = _build_split(train_es, train_wix, "train", trim=args.trim)
-    train_extra_dataset = _build_tsv_split(
-        train_extra_tsv, "train extra", trim=args.trim
-    )
-    train_dataset = concatenate_datasets([train_dataset, train_extra_dataset])
+    # train_extra_dataset = _build_tsv_split(
+    #     train_extra_tsv, "train extra", trim=args.trim
+    # )
+    # train_dataset = concatenate_datasets([train_dataset, train_extra_dataset])
     dev_dataset = _build_split(dev_es, dev_wix, "dev", trim=args.trim)
     test_dataset = _build_split(test_es, test_wix, "test", trim=args.trim)
 

@@ -4,7 +4,7 @@ Minimal codebase to run:
 
 - supervised fine-tuning (SFT) with `trl.SFTTrainer`
 - GRPO fine-tuning with `trl.GRPOTrainer`
-- chrF++ evaluation for translation checkpoints
+- BLEU/chrF evaluation for translation checkpoints with chrF++ sentence selection
 
 ## What this does
 
@@ -100,7 +100,7 @@ Pre-rendered text format:
 
 ## Test Evaluation
 
-Run chrF++ evaluation on the dataset `test` split:
+Run BLEU/chrF evaluation on the dataset `test` split. The evaluator still uses sentence-level `chrF++` for best-of-n candidate selection:
 
 ```bash
 ./scripts/test.sh

@@ -27,8 +27,8 @@ weight_decay: 0.0
 lr_scheduler_type: "linear"
 
 logging_steps: 50
-save_steps: 250
-eval_steps: 250
+save_steps: 1000
+eval_steps: 1000
 save_total_limit: 3
 early_stopping_patience: 3
 
