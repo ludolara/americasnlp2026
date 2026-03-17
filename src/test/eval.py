@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from train.data import format_translation_prompt
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -100,15 +102,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def format_prompt(source: str, source_name: str, target_name: str) -> str:
-    return (
-        "<|user|>\n"
-        f"Translate from {source_name} to {target_name}.\n\n"
-        f"{source.strip()}\n"
-        "<|assistant|>\n"
-    )
-
-
 def maybe_tqdm(
     iterable: Any,
     *,
@@ -128,6 +121,13 @@ def extract_assistant_response(text: str) -> str:
     cleaned = text.strip()
     if "<|assistant|>" in cleaned:
         cleaned = cleaned.rsplit("<|assistant|>", maxsplit=1)[-1].strip()
+    if "<|CHATBOT_TOKEN|>" in cleaned:
+        cleaned = cleaned.rsplit("<|CHATBOT_TOKEN|>", maxsplit=1)[-1].strip()
+    if "<|START_RESPONSE|>" in cleaned:
+        cleaned = cleaned.rsplit("<|START_RESPONSE|>", maxsplit=1)[-1].strip()
+    for marker in ("<|END_RESPONSE|>", "<|END_OF_TURN_TOKEN|>", "<|START_OF_TURN_TOKEN|>"):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, maxsplit=1)[0].strip()
     if "<|user|>" in cleaned:
         cleaned = cleaned.split("<|user|>", maxsplit=1)[0].strip()
     return cleaned
@@ -135,18 +135,18 @@ def extract_assistant_response(text: str) -> str:
 
 def generate_prediction_candidates(
     model_name_or_path: str,
+    tokenizer: Any,
     prompts: list[str],
     batch_size: int,
     max_new_tokens: int,
     generation_budget: int,
 ) -> list[list[str]]:
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM
 
     if generation_budget < 1:
         raise ValueError("--generation-budget must be at least 1.")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -260,6 +260,7 @@ def main() -> None:
 
     from datasets import load_from_disk
     from sacrebleu.metrics import BLEU, CHRF
+    from transformers import AutoTokenizer
 
     dataset = load_from_disk(args.dataset_path)
     if args.split not in dataset:
@@ -284,12 +285,20 @@ def main() -> None:
 
     sources = [str(value).strip() for value in split_dataset[args.source_column]]
     references = [str(value).strip() for value in split_dataset[args.target_column]]
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
     prompts = [
-        format_prompt(source, args.source_name, args.target_name) for source in sources
+        format_translation_prompt(
+            source,
+            args.source_name,
+            args.target_name,
+            tokenizer,
+        )
+        for source in sources
     ]
 
     prediction_candidates = generate_prediction_candidates(
         model_name_or_path=args.model_name_or_path,
+        tokenizer=tokenizer,
         prompts=prompts,
         batch_size=args.batch_size,
         max_new_tokens=args.max_new_tokens,

@@ -35,6 +35,7 @@ class SFTTrainConfig(DatasetConfigMixin):
     output_dir: str = "outputs/tiny-aya-full-sft"
     max_seq_length: int = 2048
     packing: bool = False
+    language_sampling_alpha: float = 1.0
 
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
@@ -120,6 +121,10 @@ def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
     patience = raw.get("early_stopping_patience")
     if patience is not None and patience < 1:
         raise ValueError("early_stopping_patience must be >= 1 when set")
+
+    language_sampling_alpha = raw.get("language_sampling_alpha")
+    if language_sampling_alpha is not None and language_sampling_alpha < 0:
+        raise ValueError("language_sampling_alpha must be >= 0.")
 
     return config_cls(**raw)
 

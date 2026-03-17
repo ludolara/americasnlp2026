@@ -181,6 +181,13 @@ def extract_assistant_response(text: str) -> str:
     cleaned = text.strip()
     if "<|assistant|>" in cleaned:
         cleaned = cleaned.rsplit("<|assistant|>", maxsplit=1)[-1].strip()
+    if "<|CHATBOT_TOKEN|>" in cleaned:
+        cleaned = cleaned.rsplit("<|CHATBOT_TOKEN|>", maxsplit=1)[-1].strip()
+    if "<|START_RESPONSE|>" in cleaned:
+        cleaned = cleaned.rsplit("<|START_RESPONSE|>", maxsplit=1)[-1].strip()
+    for marker in ("<|END_RESPONSE|>", "<|END_OF_TURN_TOKEN|>", "<|START_OF_TURN_TOKEN|>"):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, maxsplit=1)[0].strip()
     if "<|user|>" in cleaned:
         cleaned = cleaned.split("<|user|>", maxsplit=1)[0].strip()
     return cleaned
@@ -232,7 +239,11 @@ def main() -> None:
         model.config.use_cache = False
 
     raw = load_datasets(cfg)
-    train_dataset, eval_dataset = prepare_grpo_splits(raw=raw, config=cfg)
+    train_dataset, eval_dataset = prepare_grpo_splits(
+        raw=raw,
+        config=cfg,
+        tokenizer=tokenizer,
+    )
     has_eval = eval_dataset is not None
     training_args = _build_grpo_args(cfg, has_eval=has_eval)
     callbacks = _build_callbacks(cfg, has_eval=has_eval)

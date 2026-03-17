@@ -40,22 +40,60 @@ def load_datasets(config: DatasetConfigMixin) -> DatasetDict:
     return load_dataset(extension, data_files=data_files)
 
 
-def format_translation_prompt(source: str, source_name: str, target_name: str) -> str:
-    return (
-        "<|user|>\n"
-        f"Translate from {source_name} to {target_name}.\n\n"
-        f"{source.strip()}\n"
-        "<|assistant|>\n"
+def _apply_chat_template(
+    tokenizer: PreTrainedTokenizerBase | None,
+    messages: list[dict[str, str]],
+    *,
+    add_generation_prompt: bool,
+) -> str:
+    if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
+        raise ValueError(
+            "Tiny Aya formatting requires a tokenizer with `apply_chat_template`."
+        )
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
     )
 
 
-def _format_instruction_example(example: Mapping[str, Any]) -> str:
+def format_translation_prompt(
+    source: str,
+    source_name: str,
+    target_name: str,
+    tokenizer: PreTrainedTokenizerBase | None,
+) -> str:
+    return _apply_chat_template(
+        tokenizer,
+        [
+            {
+                "role": "user",
+                "content": (
+                    f"Translate from {source_name} to {target_name}.\n\n{source.strip()}"
+                ),
+            }
+        ],
+        add_generation_prompt=True,
+    )
+
+
+def _format_instruction_example(
+    example: Mapping[str, Any],
+    tokenizer: PreTrainedTokenizerBase | None,
+) -> str:
     instruction = (example.get("instruction") or "").strip()
     input_text = (example.get("input") or "").strip()
     output = (example.get("output") or "").strip()
 
     user_text = instruction if not input_text else f"{instruction}\n\n{input_text}"
-    return "<|user|>\n" f"{user_text}\n" "<|assistant|>\n" f"{output}"
+    return _apply_chat_template(
+        tokenizer,
+        [
+            {"role": "user", "content": user_text},
+            {"role": "assistant", "content": output},
+        ],
+        add_generation_prompt=False,
+    )
 
 
 def _format_prompt_completion(example: Mapping[str, Any]) -> str:
@@ -68,12 +106,24 @@ def _format_translation_example(
     example: Mapping[str, Any],
     source_column: str,
     target_column: str,
-    source_name: str,
-    target_name: str,
+    tokenizer: PreTrainedTokenizerBase | None,
 ) -> str:
     source = str(example.get(source_column, "")).strip()
     target = str(example.get(target_column, "")).strip()
-    return f"{format_translation_prompt(source, source_name, target_name)}{target}"
+    target_name = str(example.get("language") or "").strip()
+    if not target_name:
+        raise ValueError("Translation SFT examples must include a non-empty `language` field.")
+    return _apply_chat_template(
+        tokenizer,
+        [
+            {
+                "role": "user",
+                "content": f"Traduce del español al {target_name}.\n\n{source}",
+            },
+            {"role": "assistant", "content": target},
+        ],
+        add_generation_prompt=False,
+    )
 
 
 def build_text_dataset(
@@ -99,29 +149,29 @@ def build_text_dataset(
     elif {"prompt", "completion"}.issubset(columns):
         format_fn = _format_prompt_completion
     elif {"instruction", "output"}.issubset(columns):
-        format_fn = _format_instruction_example
+
+        def format_fn(example: Mapping[str, Any]) -> str:
+            return _format_instruction_example(example, tokenizer)
+
     elif {config.source_column, config.target_column}.issubset(columns):
+        if "language" not in columns:
+            raise ValueError(
+                "Translation SFT datasets must include a `language` column for multilingual prompts."
+            )
 
         def format_fn(example: Mapping[str, Any]) -> str:
             return _format_translation_example(
                 example=example,
                 source_column=config.source_column,
                 target_column=config.target_column,
-                source_name=config.source_name,
-                target_name=config.target_name,
+                tokenizer=tokenizer,
             )
 
     elif "messages" in columns:
-        if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
-            raise ValueError(
-                "Dataset has `messages` column but tokenizer chat template is unavailable. "
-                "Either preprocess to `text` or use a tokenizer with `apply_chat_template`."
-            )
-
         def format_fn(example: Mapping[str, Any]) -> str:
-            return tokenizer.apply_chat_template(
+            return _apply_chat_template(
+                tokenizer,
                 example["messages"],
-                tokenize=False,
                 add_generation_prompt=False,
             )
 
@@ -182,6 +232,7 @@ def build_grpo_dataset(
     dataset: Dataset,
     config: GRPOTrainConfig,
     split_name: str,
+    tokenizer: PreTrainedTokenizerBase | None = None,
 ) -> Dataset:
     columns = set(dataset.column_names)
     missing_columns = [
@@ -202,6 +253,7 @@ def build_grpo_dataset(
                 source,
                 config.source_name,
                 config.target_name,
+                tokenizer,
             ),
             "source": source,
             "reference": reference,
@@ -217,6 +269,7 @@ def build_grpo_dataset(
 def prepare_grpo_splits(
     raw: DatasetDict,
     config: GRPOTrainConfig,
+    tokenizer: PreTrainedTokenizerBase | None = None,
 ) -> tuple[Dataset, Dataset | None]:
     if config.train_split not in raw:
         available = ", ".join(raw.keys())
@@ -226,6 +279,7 @@ def prepare_grpo_splits(
         dataset=raw[config.train_split],
         config=config,
         split_name=config.train_split,
+        tokenizer=tokenizer,
     )
 
     eval_dataset = None
@@ -234,6 +288,7 @@ def prepare_grpo_splits(
             dataset=raw[config.eval_split],
             config=config,
             split_name=config.eval_split,
+            tokenizer=tokenizer,
         )
 
     return train_dataset, eval_dataset
