@@ -59,6 +59,8 @@ class SFTTrainConfig(DatasetConfigMixin):
 @dataclass
 class GRPOTrainConfig(DatasetConfigMixin):
     output_dir: str = "outputs/tiny-aya-full-grpo"
+    auto_resume_from_checkpoint: bool = True
+    resume_from_checkpoint: str | None = None
     max_completion_length: int = 2048
     num_generations: int = 4
     temperature: float = 0.9

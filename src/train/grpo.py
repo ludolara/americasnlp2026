@@ -4,6 +4,7 @@ import argparse
 import copy
 import inspect
 import json
+import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from transformers import (
     Trainer,
     set_seed,
 )
+from transformers.trainer_utils import get_last_checkpoint
 from trl import GRPOConfig, GRPOTrainer
 from trl.trainer.grpo_trainer import (
     FSDP,
@@ -49,6 +51,39 @@ def parse_args() -> argparse.Namespace:
         help="Path to YAML training config",
     )
     return parser.parse_args()
+
+
+def _resolve_resume_checkpoint(cfg) -> str | None:
+    rank = int(os.environ.get("RANK", "0"))
+    output_dir = Path(cfg.output_dir)
+
+    if cfg.resume_from_checkpoint:
+        checkpoint_path = Path(cfg.resume_from_checkpoint)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"Configured resume checkpoint does not exist: {checkpoint_path}"
+            )
+        if rank == 0:
+            print(f"Resuming GRPO from configured checkpoint: {checkpoint_path}")
+        return str(checkpoint_path)
+
+    if not cfg.auto_resume_from_checkpoint:
+        if rank == 0:
+            print("GRPO auto-resume disabled in config; starting fresh.")
+        return None
+
+    if not output_dir.exists():
+        if rank == 0:
+            print(f"Output dir {output_dir} does not exist yet; starting GRPO from scratch.")
+        return None
+
+    checkpoint = get_last_checkpoint(str(output_dir))
+    if rank == 0:
+        if checkpoint is None:
+            print(f"No GRPO checkpoint found in {output_dir}; starting fresh.")
+        else:
+            print(f"Resuming GRPO from latest checkpoint: {checkpoint}")
+    return checkpoint
 
 
 def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
@@ -279,6 +314,7 @@ def _build_train_sampler(
 def main() -> None:
     args = parse_args()
     cfg = load_grpo_config(args.config)
+    resume_checkpoint = _resolve_resume_checkpoint(cfg)
 
     set_seed(cfg.seed)
 
@@ -350,7 +386,7 @@ def main() -> None:
             indent=2,
         )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
     trainer.save_model(cfg.output_dir)
     tokenizer.save_pretrained(cfg.output_dir)
 

@@ -6,6 +6,8 @@ source_column: "es"
 target_column: "target"
 
 output_dir: "outputs/tiny-aya-americas-grpo"
+auto_resume_from_checkpoint: true
+# resume_from_checkpoint: "outputs/tiny-aya-americas-grpo/checkpoint-2250"
 max_completion_length: 256
 num_generations: 8
 temperature: 0.9
@@ -28,7 +30,7 @@ save_steps: 750
 eval_steps: 750
 save_total_limit: 3
 early_stopping_patience: 3
-early_stopping_threshold: 0.005
+early_stopping_threshold: 0.0005
 
 bf16: true
 fp16: false

@@ -19,7 +19,7 @@ source "$ROOT_DIR/wixarika/bin/activate"
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
   --model-name-or-path outputs/tiny-aya-americas \
   --dataset-path data/americasnlp2026 \
-  --split test \
+  --split validation \
   --batch-size 4096 \
   --generation-budget 10 \
   --show-examples 
@@ -27,9 +27,9 @@ source "$ROOT_DIR/wixarika/bin/activate"
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
   --model-name-or-path outputs/tiny-aya-americas \
   --dataset-path data/americasnlp2026 \
-  --split test \
+  --split validation \
   --batch-size 4096 \
   --generation-budget 100 \
   --show-examples 
 
-# sbatch ./scripts/grpo.sh
+sbatch ./scripts/grpo.sh
