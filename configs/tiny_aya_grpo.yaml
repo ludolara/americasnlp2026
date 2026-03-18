@@ -15,19 +15,20 @@ temperature: 0.9
 language_sampling_alpha: 0.3
 
 per_device_train_batch_size: 32
-per_device_eval_batch_size: 8
-gradient_accumulation_steps: 2
+per_device_eval_batch_size: 32
+gradient_accumulation_steps: 1
 learning_rate: 1.0e-6
 num_train_epochs: 60
 # warmup_ratio: 0.03
 # weight_decay: 0.0
 lr_scheduler_type: "linear"
 
-logging_steps: 50
-save_steps: 1000
-eval_steps: 1000
+logging_steps: 250
+save_steps: 750
+eval_steps: 750
 save_total_limit: 3
 early_stopping_patience: 3
+early_stopping_threshold: 0.005
 
 bf16: true
 fp16: false

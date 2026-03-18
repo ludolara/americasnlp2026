@@ -37,7 +37,7 @@ class SFTTrainConfig(DatasetConfigMixin):
 
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
-    gradient_accumulation_steps: int = 16
+    gradient_accumulation_steps: int = 1
     learning_rate: float = 2e-5
     num_train_epochs: float = 3.0
     warmup_steps: float | int | None = 0.03
@@ -69,7 +69,7 @@ class GRPOTrainConfig(DatasetConfigMixin):
 
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
-    gradient_accumulation_steps: int = 4
+    gradient_accumulation_steps: int = 1
     learning_rate: float = 1e-6
     num_train_epochs: float = 3.0
     warmup_steps: float | int | None = 0.03

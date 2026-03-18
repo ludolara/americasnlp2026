@@ -2,39 +2,55 @@
 #SBATCH --job-name=grpo
 #SBATCH --output=logs/grpo_output.log
 #SBATCH --error=logs/grpo_error.log
-#SBATCH --gres=gpu:a100l
+#SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=48:00:00
-#SBATCH --partition=unkillable
+#SBATCH --time=3:00:00
+#SBATCH --partition=short-unkillable
 
 set -euo pipefail
 
 ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "$ROOT_DIR"
-EVAL_ARGS=("$@")
 
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-./wixarika/bin/python -m train.grpo --config configs/tiny_aya_grpo.yaml
+GRPO_CONFIG="configs/tiny_aya_grpo.yaml"
 
-./wixarika/bin/python -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas-grpo/ \
-  --dataset-path data/americasnlp2026 \
-  --split validation \
-  --target-column target \
-  --batch-size 512 \
-  --generation-budget 10 \
-  --show-examples \
-  "${EVAL_ARGS[@]}"
+NUM_GPUS="${SLURM_GPUS_ON_NODE:-}"
+if [[ -z "$NUM_GPUS" && -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  IFS=',' read -r -a CUDA_DEVICES <<< "$CUDA_VISIBLE_DEVICES"
+  NUM_GPUS="${#CUDA_DEVICES[@]}"
+fi
+NUM_GPUS="${NUM_GPUS:-1}"
 
-./wixarika/bin/python -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas-grpo/ \
-  --dataset-path data/americasnlp2026 \
-  --split validation \
-  --target-column target \
-  --batch-size 512 \
-  --generation-budget 100 \
-  --show-examples \
-  "${EVAL_ARGS[@]}"
+if [[ "$NUM_GPUS" -gt 1 ]]; then
+  ./wixarika/bin/python -m torch.distributed.run \
+    --standalone \
+    --nproc_per_node="$NUM_GPUS" \
+    -m train.grpo \
+    --config "$GRPO_CONFIG"
+else
+  ./wixarika/bin/python -m train.grpo --config "$GRPO_CONFIG"
+fi
+
+sbatch ./scripts/test_grpo.sh
+
+# ./wixarika/bin/python -m test.eval \
+#   --model-name-or-path outputs/tiny-aya-americas-grpo/ \
+#   --dataset-path data/americasnlp2026 \
+#   --split validation \
+#   --target-column target \
+#   --batch-size 4096 \
+#   --generation-budget 10 \
+#   --show-examples
+
+# ./wixarika/bin/python -m test.eval \
+#   --model-name-or-path outputs/tiny-aya-americas-grpo/ \
+#   --dataset-path data/americasnlp2026 \
+#   --split validation \
+#   --target-column target \
+#   --batch-size 4096 \
+#   --generation-budget 100 \
+#   --show-examples

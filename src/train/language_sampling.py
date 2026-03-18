@@ -5,6 +5,7 @@ from collections.abc import Iterator
 import random
 
 from datasets import Dataset
+import torch
 from torch.utils.data import Sampler
 
 
@@ -129,7 +130,13 @@ class DistributedTemperatureSmoothedLanguageSampler(Sampler[int]):
 
 
 class TemperatureSmoothedRepeatSampler(Sampler[int]):
-    """Samples GRPO prompt groups by language before applying TRL's repeat pattern."""
+    """Samples GRPO prompt groups by language before applying TRL's repeat pattern.
+
+    This sampler intentionally mirrors TRL's `RepeatSampler` contract: every rank
+    builds the same global prompt stream, and Accelerate shards batches by process.
+    Exposing a `torch.Generator` lets Accelerate keep the sampler RNG aligned
+    across ranks in distributed training.
+    """
 
     def __init__(
         self,
@@ -153,7 +160,9 @@ class TemperatureSmoothedRepeatSampler(Sampler[int]):
         self.mini_repeat_count = mini_repeat_count
         self.repeat_count = repeat_count
         self.num_samples = len(languages)
-        self.iteration = 0
+        self.generator = torch.Generator()
+        if seed is not None:
+            self.generator.manual_seed(seed)
         self.language_to_indices: dict[str, list[int]] = defaultdict(list)
         for index, language in enumerate(languages):
             self.language_to_indices[language].append(index)
@@ -167,37 +176,47 @@ class TemperatureSmoothedRepeatSampler(Sampler[int]):
         return usable_samples * self.mini_repeat_count * self.repeat_count
 
     @staticmethod
-    def _shuffled(indices: list[int], rng: random.Random) -> list[int]:
-        shuffled = list(indices)
-        rng.shuffle(shuffled)
-        return shuffled
+    def _shuffled(indices: list[int], generator: torch.Generator) -> list[int]:
+        if len(indices) <= 1:
+            return list(indices)
+        order = torch.randperm(len(indices), generator=generator).tolist()
+        return [indices[index] for index in order]
 
     def __iter__(self) -> Iterator[int]:
-        rng = random.Random(self.seed + self.iteration)
         usable_samples = (self.num_samples // self.batch_size) * self.batch_size
         num_batches = usable_samples // self.batch_size
         languages = tuple(self.language_weights.keys())
-        weights = tuple(self.language_weights[language] for language in languages)
+        weights = torch.tensor(
+            [self.language_weights[language] for language in languages],
+            dtype=torch.float,
+        )
         pools = {
-            language: self._shuffled(indices, rng)
+            language: self._shuffled(indices, self.generator)
             for language, indices in self.language_to_indices.items()
         }
 
         def draw_index(language: str) -> int:
             pool = pools[language]
             if not pool:
-                pool = self._shuffled(self.language_to_indices[language], rng)
+                pool = self._shuffled(self.language_to_indices[language], self.generator)
                 pools[language] = pool
             return pool.pop()
 
         for _ in range(num_batches):
             batch_indices = [
-                draw_index(rng.choices(languages, weights=weights, k=1)[0])
+                draw_index(
+                    languages[
+                        torch.multinomial(
+                            weights,
+                            num_samples=1,
+                            replacement=True,
+                            generator=self.generator,
+                        ).item()
+                    ]
+                )
                 for _ in range(self.batch_size)
             ]
             for _ in range(self.repeat_count):
                 for index in batch_indices:
                     for _ in range(self.mini_repeat_count):
                         yield index
-
-        self.iteration += 1

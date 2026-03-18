@@ -239,6 +239,7 @@ def _build_train_sampler(
     generation_batch_size: int,
     num_generations: int,
     repeat_count: int,
+    world_size: int,
 ) -> Sampler[int] | None:
     if "language" not in dataset.column_names:
         return None
@@ -258,6 +259,11 @@ def _build_train_sampler(
         f"Train language mix (alpha={alpha:.2f}): "
         f"{format_weighted_mix(smoothed_mix)}"
     )
+    if world_size > 1:
+        print(
+            f"Using distributed GRPO alpha-smoothed sampler "
+            f"(alpha={alpha:.2f}, world_size={world_size}) with shared-seed batching."
+        )
 
     prompt_batch_size = generation_batch_size // num_generations
     return TemperatureSmoothedRepeatSampler(
@@ -317,6 +323,7 @@ def main() -> None:
         generation_batch_size=training_args.generation_batch_size,
         num_generations=training_args.num_generations,
         repeat_count=training_args.num_iterations * training_args.steps_per_generation,
+        world_size=getattr(training_args, "world_size", 1),
     )
 
     trainer = PatchedGRPOTrainer(

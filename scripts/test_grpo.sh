@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=test_sft
-#SBATCH --output=logs/test_sft_output.log
-#SBATCH --error=logs/test_sft_error.log
+#SBATCH --job-name=test_grpo
+#SBATCH --output=logs/test_grpo_output.log
+#SBATCH --error=logs/test_grpo_error.log
 #SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
@@ -17,19 +17,17 @@ export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas \
+  --model-name-or-path outputs/tiny-aya-americas-grpo \
   --dataset-path data/americasnlp2026 \
-  --split test \
+  --split validation \
   --batch-size 4096 \
   --generation-budget 10 \
-  --show-examples 
+  --show-examples
 
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas \
+  --model-name-or-path outputs/tiny-aya-americas-grpo \
   --dataset-path data/americasnlp2026 \
-  --split test \
+  --split validation \
   --batch-size 4096 \
   --generation-budget 100 \
-  --show-examples 
-
-# sbatch ./scripts/grpo.sh
+  --show-examples
