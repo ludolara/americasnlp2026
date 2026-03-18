@@ -36,19 +36,3 @@ else
 fi
 
 sbatch ./scripts/test_sft.sh
-
-# ./wixarika/bin/python -m test.eval \
-#   --model-name-or-path outputs/tiny-aya-americas/ \
-#   --dataset-path data/americasnlp2026 \
-#   --split validation \
-#   --batch-size 4096 \
-#   --generation-budget 10 \
-#   --show-examples 
-
-# ./wixarika/bin/python -m test.eval \
-#   --model-name-or-path outputs/tiny-aya-americas/ \
-#   --dataset-path data/americasnlp2026 \
-#   --split validation \
-#   --batch-size 4096 \
-#   --generation-budget 100 \
-#   --show-examples 

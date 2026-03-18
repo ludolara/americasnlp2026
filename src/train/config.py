@@ -23,6 +23,7 @@ class DatasetConfigMixin:
 
     source_column: str = "es"
     target_column: str = "wix"
+    bidirectional_translation: bool = False
 
     seed: int = 42
     report_to: str = "none"

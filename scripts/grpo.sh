@@ -120,21 +120,3 @@ if grpo_model_exists; then
   cancel_follow_up_grpo
   submit_test_job
 fi
-
-# ./wixarika/bin/python -m test.eval \
-#   --model-name-or-path outputs/tiny-aya-americas-grpo/ \
-#   --dataset-path data/americasnlp2026 \
-#   --split validation \
-#   --target-column target \
-#   --batch-size 4096 \
-#   --generation-budget 10 \
-#   --show-examples
-
-# ./wixarika/bin/python -m test.eval \
-#   --model-name-or-path outputs/tiny-aya-americas-grpo/ \
-#   --dataset-path data/americasnlp2026 \
-#   --split validation \
-#   --target-column target \
-#   --batch-size 4096 \
-#   --generation-budget 100 \
-#   --show-examples

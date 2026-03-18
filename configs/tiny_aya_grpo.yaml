@@ -4,6 +4,7 @@ train_split: "train"
 eval_split: "validation"
 source_column: "es"
 target_column: "target"
+bidirectional_translation: true
 
 output_dir: "outputs/tiny-aya-americas-grpo"
 auto_resume_from_checkpoint: true
