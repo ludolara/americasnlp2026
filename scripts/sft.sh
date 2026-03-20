@@ -36,3 +36,4 @@ else
 fi
 
 sbatch ./scripts/test_sft.sh
+

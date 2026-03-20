@@ -32,4 +32,4 @@ source "$ROOT_DIR/wixarika/bin/activate"
   --generation-budget 100 \
   --show-examples 
 
-sbatch ./scripts/grpo.sh
+# sbatch ./scripts/grpo.sh

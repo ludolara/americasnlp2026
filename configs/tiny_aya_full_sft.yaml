@@ -25,7 +25,7 @@ save_steps: 50
 eval_steps: 50
 save_total_limit: 3
 early_stopping_patience: 3
-early_stopping_threshold: 0.005
+early_stopping_threshold: 0.0005
 
 bf16: true
 fp16: false
