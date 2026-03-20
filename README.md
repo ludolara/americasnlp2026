@@ -30,7 +30,7 @@ uv pip install -r requirements.txt
 
 ## Configure
 
-Edit `configs/tiny_aya_full_sft.yaml`:
+Edit `configs/sft.yaml`:
 
 - `model_name_or_path`: set your Tiny Aya base model id
 - Choose one data source:
@@ -49,7 +49,7 @@ Edit `configs/tiny_aya_full_sft.yaml`:
 or
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.sft --config configs/tiny_aya_full_sft.yaml
+PYTHONPATH=src ./wixarika/bin/python -m train.sft --config configs/sft.yaml
 ```
 
 ## Run GRPO
@@ -63,7 +63,7 @@ The default GRPO config starts from the SFT checkpoint and uses sentence-level `
 or
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.grpo --config configs/tiny_aya_grpo.yaml
+PYTHONPATH=src ./wixarika/bin/python -m train.grpo --config configs/grpo.yaml
 ```
 
 ## Notes for full fine-tuning

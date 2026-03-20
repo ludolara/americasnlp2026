@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/tiny_aya_full_sft.yaml",
+        default="configs/sft.yaml",
         help="Path to YAML training config",
     )
     return parser.parse_args()

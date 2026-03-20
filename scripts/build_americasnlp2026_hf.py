@@ -47,12 +47,6 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing Guarani-Spanish files.",
     )
     parser.add_argument(
-        "--maya-dir",
-        type=Path,
-        default=Path("data/raw/maya-spanish"),
-        help="Directory containing Maya-Spanish files.",
-    )
-    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("data/americasnlp2026"),
@@ -256,7 +250,6 @@ def main() -> None:
     wixarika_dir = args.wixarika_dir
     bribri_dir = args.bribri_dir
     guarani_dir = args.guarani_dir
-    maya_dir = args.maya_dir
     output_dir = args.output_dir
 
     required = [
@@ -274,10 +267,6 @@ def main() -> None:
         guarani_dir / "train.gn",
         guarani_dir / "dev.es",
         guarani_dir / "dev.gn",
-        maya_dir / "train.es",
-        maya_dir / "train.maya",
-        maya_dir / "dev.es",
-        maya_dir / "dev.maya",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -325,14 +314,6 @@ def main() -> None:
             language_code="gn",
             trim=args.trim,
         ),
-        _build_parallel_split(
-            maya_dir / "train.es",
-            maya_dir / "train.maya",
-            split_name="train",
-            language="maya",
-            language_code="myn",
-            trim=args.trim,
-        ),
     ]
 
     validation_parts = [
@@ -360,14 +341,6 @@ def main() -> None:
             language_code="gn",
             trim=args.trim,
         ),
-        _build_parallel_split(
-            maya_dir / "dev.es",
-            maya_dir / "dev.maya",
-            split_name="dev",
-            language="maya",
-            language_code="myn",
-            trim=args.trim,
-        ),
     ]
 
     test_parts: list[Dataset] = []
@@ -389,12 +362,6 @@ def main() -> None:
             "guarani",
             "gn",
             "gn",
-        ),
-        (
-            maya_dir,
-            "maya",
-            "myn",
-            "maya",
         ),
     ]
     for raw_dir, language, language_code, target_suffix in optional_tests:

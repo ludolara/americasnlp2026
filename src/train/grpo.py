@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/tiny_aya_grpo.yaml",
+        default="configs/grpo.yaml",
         help="Path to YAML training config",
     )
     return parser.parse_args()

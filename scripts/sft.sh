@@ -16,7 +16,7 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-SFT_CONFIG="configs/tiny_aya_full_sft.yaml"
+SFT_CONFIG="configs/sft.yaml"
 
 NUM_GPUS="${SLURM_GPUS_ON_NODE:-}"
 if [[ -z "$NUM_GPUS" && -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then

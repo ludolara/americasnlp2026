@@ -16,7 +16,7 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-GRPO_CONFIG="configs/tiny_aya_grpo.yaml"
+GRPO_CONFIG="configs/grpo.yaml"
 GRPO_CONFIG_PATH="$ROOT_DIR/$GRPO_CONFIG"
 TEST_GRPO_OUTPUT_LOG="$ROOT_DIR/logs/test_grpo_output.log"
 TEST_GRPO_ERROR_LOG="$ROOT_DIR/logs/test_grpo_error.log"
