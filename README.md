@@ -30,9 +30,10 @@ uv pip install -r requirements.txt
 
 ## Configure
 
-Edit `configs/sft.yaml`:
+Edit one of:
 
-- `model_name_or_path`: set your Tiny Aya base model id
+- `configs/full_sft.yaml`: full fine-tuning for the text Tiny Aya model
+- `configs/lora_sft.yaml`: LoRA fine-tuning for Aya Vision using text-only examples
 - Choose one data source:
   - `local_dataset_path` (HF `save_to_disk` folder), or
   - `dataset_name` (HF dataset), or
@@ -40,16 +41,28 @@ Edit `configs/sft.yaml`:
 - Optional: set `early_stopping_patience` to stop after that many evals without improvement in `eval_loss`
 - Optional: set `early_stopping_threshold` to require a minimum `eval_loss` improvement before patience resets
 
-## Run SFT
+## Run Full SFT
 
 ```bash
-./scripts/train.sh
+./scripts/full_sft.sh
 ```
 
 or
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.sft --config configs/sft.yaml
+PYTHONPATH=src ./wixarika/bin/python -m train.full_sft --config configs/full_sft.yaml
+```
+
+## Run LoRA SFT
+
+```bash
+./scripts/lora_sft.sh
+```
+
+or
+
+```bash
+PYTHONPATH=src ./wixarika/bin/python -m train.lora_sft --config configs/lora_sft.yaml
 ```
 
 ## Run GRPO

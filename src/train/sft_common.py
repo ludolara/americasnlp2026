@@ -1,29 +1,20 @@
 from __future__ import annotations
 
-import argparse
 import inspect
-import json
+import os
+import shutil
 from pathlib import Path
 
-import torch
 from datasets import Dataset
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    EarlyStoppingCallback,
-    TrainingArguments,
-    set_seed,
-)
-from trl import SFTTrainer
 from torch.utils.data import Sampler
+from transformers import EarlyStoppingCallback, TrainingArguments
+from trl import SFTTrainer
 
 try:
     from trl import SFTConfig
 except ImportError:
     SFTConfig = None  # type: ignore[assignment]
 
-from train.config import load_sft_config, pretty_config
-from train.data import ensure_chat_template, load_datasets, prepare_sft_splits
 from train.language_sampling import (
     DistributedTemperatureSmoothedLanguageSampler,
     TemperatureSmoothedLanguageSampler,
@@ -45,20 +36,118 @@ class MultilingualSFTTrainer(SFTTrainer):
         return super()._get_train_sampler(train_dataset)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Full fine-tuning (SFT) for the translation model"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/sft.yaml",
-        help="Path to YAML training config",
-    )
-    return parser.parse_args()
+def _discover_cuda_home() -> Path | None:
+    for env_var in ("CUDA_HOME", "CUDA_PATH"):
+        candidate = os.environ.get(env_var)
+        if candidate:
+            candidate_path = Path(candidate).expanduser()
+            if candidate_path.exists():
+                return candidate_path
+
+    nvcc = shutil.which("nvcc")
+    if nvcc:
+        return Path(nvcc).resolve().parent.parent
+
+    for candidate in (
+        "/usr/local/cuda",
+        "/usr/local/cuda-13.0",
+        "/usr/lib/cuda",
+        "/opt/cuda",
+    ):
+        candidate_path = Path(candidate)
+        if candidate_path.exists():
+            return candidate_path
+
+    return None
 
 
-def _build_sft_args(cfg, has_eval: bool):
+def ensure_cuda_home() -> str | None:
+    cuda_home = _discover_cuda_home()
+    if cuda_home is None:
+        return None
+
+    resolved = str(cuda_home)
+    os.environ["CUDA_HOME"] = resolved
+    os.environ["CUDA_PATH"] = resolved
+
+    cuda_bin = str(cuda_home / "bin")
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    if (cuda_home / "bin").exists() and cuda_bin not in path_entries:
+        os.environ["PATH"] = (
+            f"{cuda_bin}{os.pathsep}{os.environ['PATH']}"
+            if os.environ.get("PATH")
+            else cuda_bin
+        )
+
+    cuda_lib64 = str(cuda_home / "lib64")
+    ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
+    ld_entries = ld_library_path.split(os.pathsep) if ld_library_path else []
+    if (cuda_home / "lib64").exists() and cuda_lib64 not in ld_entries:
+        os.environ["LD_LIBRARY_PATH"] = (
+            f"{cuda_lib64}{os.pathsep}{ld_library_path}"
+            if ld_library_path
+            else cuda_lib64
+        )
+
+    return resolved
+
+
+def _env_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def prime_deepspeed_for_model_loading(training_args):
+    deepspeed_init = getattr(training_args, "hf_deepspeed_config", None)
+    if deepspeed_init is None:
+        return None
+
+    world_size = _env_int("WORLD_SIZE")
+    if world_size is None:
+        world_size = max(int(getattr(training_args, "world_size", 1) or 1), 1)
+
+    per_device_train_batch_size = int(training_args.per_device_train_batch_size)
+    gradient_accumulation_steps = int(training_args.gradient_accumulation_steps)
+    train_batch_size = (
+        world_size * per_device_train_batch_size * gradient_accumulation_steps
+    )
+
+    # ZeRO-3 can consult the DeepSpeed config during model construction, before Trainer
+    # finalization has a chance to replace "auto" placeholders.
+    deepspeed_init.fill_only(
+        "train_micro_batch_size_per_gpu",
+        per_device_train_batch_size,
+    )
+    deepspeed_init.fill_only(
+        "gradient_accumulation_steps",
+        gradient_accumulation_steps,
+    )
+    deepspeed_init.fill_only("train_batch_size", train_batch_size)
+
+    max_grad_norm = getattr(training_args, "max_grad_norm", None)
+    if max_grad_norm is not None:
+        deepspeed_init.fill_only("gradient_clipping", max_grad_norm)
+
+    fp16_enabled = bool(
+        getattr(training_args, "fp16", False)
+        or getattr(training_args, "fp16_full_eval", False)
+    )
+    bf16_enabled = bool(
+        getattr(training_args, "bf16", False)
+        or getattr(training_args, "bf16_full_eval", False)
+    )
+    deepspeed_init.fill_only("fp16.enabled", fp16_enabled)
+    deepspeed_init.fill_only("bf16.enabled", bf16_enabled)
+
+    return deepspeed_init
+
+
+def build_sft_args(cfg, has_eval: bool):
     args_cls = SFTConfig if SFTConfig is not None else TrainingArguments
     params = inspect.signature(args_cls.__init__).parameters
 
@@ -87,6 +176,10 @@ def _build_sft_args(cfg, has_eval: bool):
         "bf16": cfg.bf16,
         "fp16": cfg.fp16,
         "gradient_checkpointing": cfg.gradient_checkpointing,
+        "deepspeed": getattr(cfg, "deepspeed", None),
+        "ddp_find_unused_parameters": getattr(
+            cfg, "ddp_find_unused_parameters", None
+        ),
         "report_to": cfg.report_to,
         "seed": cfg.seed,
         "dataset_text_field": "text",
@@ -96,10 +189,15 @@ def _build_sft_args(cfg, has_eval: bool):
     }
 
     filtered = {k: v for k, v in kwargs.items() if k in params and v is not None}
-    return args_cls(**filtered)
+    if getattr(cfg, "deepspeed", None):
+        ensure_cuda_home()
+
+    args = args_cls(**filtered)
+    prime_deepspeed_for_model_loading(args)
+    return args
 
 
-def _build_callbacks(cfg, has_eval: bool):
+def build_callbacks(cfg, has_eval: bool):
     if cfg.early_stopping_patience is None:
         return []
     if not has_eval:
@@ -116,7 +214,7 @@ def _build_callbacks(cfg, has_eval: bool):
     return [EarlyStoppingCallback(**callback_kwargs)]
 
 
-def _build_train_sampler(
+def build_train_sampler(
     dataset: Dataset,
     *,
     seed: int,
@@ -171,83 +269,9 @@ def _build_train_sampler(
     )
 
 
-def main() -> None:
-    args = parse_args()
-    cfg = load_sft_config(args.config)
-
-    set_seed(cfg.seed)
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        cfg.model_name_or_path,
-        trust_remote_code=cfg.trust_remote_code,
-        use_fast=True,
-    )
-    tokenizer = ensure_chat_template(tokenizer)
-
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model_dtype = None
+def resolve_model_dtype(cfg):
     if cfg.bf16:
-        model_dtype = torch.bfloat16
-    elif cfg.fp16:
-        model_dtype = torch.float16
-
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg.model_name_or_path,
-        trust_remote_code=cfg.trust_remote_code,
-        dtype=model_dtype,
-    )
-
-    if cfg.gradient_checkpointing:
-        model.config.use_cache = False
-
-    raw = load_datasets(cfg)
-    train_dataset, eval_dataset = prepare_sft_splits(
-        raw=raw,
-        config=cfg,
-        eos_token=tokenizer.eos_token or "",
-        tokenizer=tokenizer,
-    )
-
-    has_eval = eval_dataset is not None
-    training_args = _build_sft_args(cfg, has_eval=has_eval)
-    train_sampler = _build_train_sampler(
-        raw[cfg.train_split],
-        seed=cfg.seed,
-        alpha=cfg.language_sampling_alpha,
-        packing=cfg.packing,
-        world_size=getattr(training_args, "world_size", 1),
-        rank=getattr(training_args, "process_index", 0),
-    )
-
-    trainer_kwargs = {
-        "model": model,
-        "args": training_args,
-        "train_dataset": train_dataset,
-        "eval_dataset": eval_dataset,
-        "train_sampler": train_sampler,
-    }
-    trainer_params = inspect.signature(SFTTrainer.__init__).parameters
-    callbacks = _build_callbacks(cfg, has_eval=has_eval)
-    if "processing_class" in trainer_params:
-        trainer_kwargs["processing_class"] = tokenizer
-    elif "tokenizer" in trainer_params:
-        trainer_kwargs["tokenizer"] = tokenizer
-    if "callbacks" in trainer_params and callbacks:
-        trainer_kwargs["callbacks"] = callbacks
-
-    trainer = MultilingualSFTTrainer(**trainer_kwargs)
-
-    output_dir = Path(cfg.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with (output_dir / "resolved_config.json").open("w", encoding="utf-8") as f:
-        json.dump(pretty_config(cfg), f, indent=2)
-
-    trainer.train()
-    trainer.save_model(cfg.output_dir)
-    tokenizer.save_pretrained(cfg.output_dir)
-
-
-if __name__ == "__main__":
-    main()
+        return "bfloat16"
+    if cfg.fp16:
+        return "float16"
+    return None

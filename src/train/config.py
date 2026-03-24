@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
@@ -55,6 +55,37 @@ class SFTTrainConfig(DatasetConfigMixin):
     bf16: bool = True
     fp16: bool = False
     gradient_checkpointing: bool = True
+    deepspeed: str | None = None
+    ddp_find_unused_parameters: bool | None = None
+
+
+@dataclass
+class LoraSFTTrainConfig(SFTTrainConfig):
+    model_name_or_path: str = "CohereLabs/aya-vision-32b"
+    output_dir: str = "outputs/aya-vision-32b-americas-lora-sft"
+
+    per_device_train_batch_size: int = 1
+    per_device_eval_batch_size: int = 1
+    gradient_accumulation_steps: int = 8
+    learning_rate: float = 2e-4
+    num_train_epochs: float = 8.0
+
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_bias: str = "none"
+    lora_target_modules: list[str] = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+    )
+    modules_to_save: list[str] | None = None
 
 
 @dataclass
@@ -91,7 +122,7 @@ class GRPOTrainConfig(DatasetConfigMixin):
     gradient_checkpointing: bool = True
 
 
-ConfigT = TypeVar("ConfigT", SFTTrainConfig, GRPOTrainConfig)
+ConfigT = TypeVar("ConfigT", SFTTrainConfig, LoraSFTTrainConfig, GRPOTrainConfig)
 
 
 def _normalize_warmup_fields(raw: dict) -> dict:
@@ -141,9 +172,17 @@ def load_sft_config(path: str | Path) -> SFTTrainConfig:
     return _load_config(path, SFTTrainConfig)
 
 
+def load_full_sft_config(path: str | Path) -> SFTTrainConfig:
+    return load_sft_config(path)
+
+
+def load_lora_sft_config(path: str | Path) -> LoraSFTTrainConfig:
+    return _load_config(path, LoraSFTTrainConfig)
+
+
 def load_grpo_config(path: str | Path) -> GRPOTrainConfig:
     return _load_config(path, GRPOTrainConfig)
 
 
-def pretty_config(config: SFTTrainConfig | GRPOTrainConfig) -> dict:
+def pretty_config(config: SFTTrainConfig | LoraSFTTrainConfig | GRPOTrainConfig) -> dict:
     return asdict(config)

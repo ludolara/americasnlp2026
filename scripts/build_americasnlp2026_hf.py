@@ -267,6 +267,8 @@ def main() -> None:
         guarani_dir / "train.gn",
         guarani_dir / "dev.es",
         guarani_dir / "dev.gn",
+        guarani_dir / "extra.tsv",
+        guarani_dir / "synthetic.tsv",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -312,6 +314,22 @@ def main() -> None:
             split_name="train",
             language="guarani",
             language_code="gn",
+            trim=args.trim,
+        ),
+        _build_tsv_split(
+            guarani_dir / "extra.tsv",
+            split_name="guarani extra",
+            language="guarani",
+            language_code="gn",
+            source_type="extra",
+            trim=args.trim,
+        ),
+        _build_tsv_split(
+            guarani_dir / "synthetic.tsv",
+            split_name="guarani synthetic",
+            language="guarani",
+            language_code="gn",
+            source_type="synthetic",
             trim=args.trim,
         ),
     ]

@@ -17,17 +17,17 @@ export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas \
+  --model-name-or-path outputs/aya-vision-32b-americas \
   --dataset-path data/americasnlp2026 \
-  --split validation \
+  --split test \
   --batch-size 4096 \
   --generation-budget 10 \
   --show-examples 
 
 "$ROOT_DIR/wixarika/bin/python" -m test.eval \
-  --model-name-or-path outputs/tiny-aya-americas \
+  --model-name-or-path outputs/aya-vision-32b-americas \
   --dataset-path data/americasnlp2026 \
-  --split validation \
+  --split test \
   --batch-size 4096 \
   --generation-budget 100 \
   --show-examples 

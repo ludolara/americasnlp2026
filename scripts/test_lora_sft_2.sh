@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=2_test_lora_sft
+#SBATCH --output=logs/test_lora_sft_output_2.log
+#SBATCH --error=logs/test_lora_sft_error_2.log
+#SBATCH --gres=gpu:h100:4
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=48G
+#SBATCH --time=3:00:00
+#SBATCH --partition=short-unkillable
+
+set -euo pipefail
+
+ROOT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
+cd "$ROOT_DIR"
+
+export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
+export HF_HOME="$ROOT_DIR/models/.hf"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+source "$ROOT_DIR/wixarika/bin/activate"
+
+MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas}"
+DATASET_PATH="${DATASET_PATH:-data/americasnlp2026}"
+SPLIT="${SPLIT:-test}"
+BATCH_SIZE="${BATCH_SIZE:-512}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-256}"
+DTYPE="${DTYPE:-bfloat16}"
+RESULTS_DIR="${RESULTS_DIR:-results}"
+NUM_EXAMPLES="${NUM_EXAMPLES:-10}"
+SHOW_EXAMPLES="${SHOW_EXAMPLES:-1}"
+LIMIT="${LIMIT:-}"
+if [[ "$#" -gt 0 ]]; then
+  SCORE_BUDGETS=("$@")
+else
+  SCORE_BUDGETS=(10 100)
+fi
+
+GENERATION_BUDGET="${GENERATION_BUDGET:-100}"
+if [[ "${#SCORE_BUDGETS[@]}" -gt 0 ]]; then
+  GENERATION_BUDGET="${SCORE_BUDGETS[0]}"
+  for score_budget in "${SCORE_BUDGETS[@]}"; do
+    if (( score_budget > GENERATION_BUDGET )); then
+      GENERATION_BUDGET="$score_budget"
+    fi
+  done
+fi
+
+echo "Launcher config: MODEL_PATH=$MODEL_PATH DATASET_PATH=$DATASET_PATH SPLIT=$SPLIT BATCH_SIZE=$BATCH_SIZE MAX_NEW_TOKENS=$MAX_NEW_TOKENS DTYPE=$DTYPE RESULTS_DIR=$RESULTS_DIR LIMIT=${LIMIT:-<none>} LANGUAGES=hch GENERATION_BUDGET=$GENERATION_BUDGET SCORE_BUDGETS=${SCORE_BUDGETS[*]:-<auto>}"
+
+echo "Starting eval_lora with generation_budget=$GENERATION_BUDGET batch_size=$BATCH_SIZE limit=${LIMIT:-<none>} languages=hch"
+cmd=(
+  "$ROOT_DIR/wixarika/bin/python" -m test.eval_lora
+  --model-name-or-path "$MODEL_PATH"
+  --dataset-path "$DATASET_PATH"
+  --split "$SPLIT"
+  --batch-size "$BATCH_SIZE"
+  --max-new-tokens "$MAX_NEW_TOKENS"
+  --generation-budget "$GENERATION_BUDGET"
+  --dtype "$DTYPE"
+  --results-dir "$RESULTS_DIR"
+  --num-examples "$NUM_EXAMPLES"
+  --languages hch
+)
+
+if [[ "${#SCORE_BUDGETS[@]}" -gt 0 ]]; then
+  cmd+=(--score-budgets "${SCORE_BUDGETS[@]}")
+fi
+
+if [[ -n "$LIMIT" ]]; then
+  cmd+=(--limit "$LIMIT")
+fi
+
+if [[ "$SHOW_EXAMPLES" == "1" ]]; then
+  cmd+=(--show-examples)
+fi
+
+"${cmd[@]}"
