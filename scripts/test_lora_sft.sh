@@ -56,7 +56,7 @@ cmd=(
   --dtype "$DTYPE"
   --results-dir "$RESULTS_DIR"
   --num-examples "$NUM_EXAMPLES"
-  --languages hch
+  --languages hch,bzd,gn
 )
 
 if [[ "${#SCORE_BUDGETS[@]}" -gt 0 ]]; then

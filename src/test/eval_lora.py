@@ -219,7 +219,6 @@ def _read_json(path: Path) -> Any:
 
 def _build_run_identity(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "results_schema_version": 2,
         "model_name_or_path": args.model_name_or_path,
         "dataset_path": args.dataset_path,
         "split": args.split,
