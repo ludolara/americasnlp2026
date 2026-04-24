@@ -4,7 +4,7 @@
 #SBATCH --error=logs/lora_sft_error.log
 #SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=96G
+#SBATCH --mem=128G
 #SBATCH --time=3:00:00
 #SBATCH --partition=short-unkillable
 
@@ -50,4 +50,16 @@ else
   ./wixarika/bin/python -m train.lora_sft --config "$SFT_CONFIG"
 fi
 
-sbatch scripts/test_lora_sft.sh
+TEST_LANGUAGES=(hch bzd gn)
+
+for language in "${TEST_LANGUAGES[@]}"; do
+  job_id="$(
+    sbatch --parsable \
+      --job-name="test_lora_sft_${language}" \
+      --output="logs/test_lora_sft_${language}_output.log" \
+      --error="logs/test_lora_sft_${language}_error.log" \
+      --export="ALL,EVAL_LANGUAGE=${language}" \
+      scripts/test_lora_sft.sh
+  )"
+  echo "Submitted test job ${job_id} for language ${language}."
+done

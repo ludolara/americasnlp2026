@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import os
+import shutil
 from pathlib import Path
 
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, set_seed
+from transformers.trainer_utils import get_last_checkpoint
 from trl import SFTTrainer
 
 from train.config import load_lora_sft_config, pretty_config
@@ -31,6 +34,51 @@ def parse_args() -> argparse.Namespace:
         help="Path to YAML training config",
     )
     return parser.parse_args()
+
+
+def _validate_saved_adapter(output_dir: Path) -> None:
+    adapter_path = output_dir / "adapter_model.safetensors"
+    if not adapter_path.exists():
+        raise RuntimeError(f"Missing saved LoRA adapter: {adapter_path}")
+
+    from safetensors import safe_open
+
+    with safe_open(adapter_path, framework="pt") as f:
+        num_tensors = len(list(f.keys()))
+
+    if num_tensors == 0:
+        raise RuntimeError(
+            "Saved LoRA adapter is empty. Training appears to have completed, but the "
+            "exported adapter contains zero tensors. This usually indicates a "
+            "DeepSpeed ZeRO-3 save/export issue."
+        )
+
+
+def _export_best_checkpoint(best_checkpoint: Path, output_dir: Path) -> None:
+    artifacts = (
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "training_args.bin",
+    )
+
+    for artifact in artifacts:
+        source = best_checkpoint / artifact
+        if source.exists():
+            shutil.copy2(source, output_dir / artifact)
+
+
+def _resolve_resume_checkpoint(output_dir: Path) -> str | None:
+    requested = os.environ.get("RESUME_FROM_CHECKPOINT", "").strip()
+    if not requested or requested.lower() in {"0", "false", "no", "none"}:
+        return None
+    if requested.lower() == "auto":
+        return get_last_checkpoint(str(output_dir))
+    return requested
 
 
 def main() -> None:
@@ -173,9 +221,20 @@ def main() -> None:
     with (output_dir / "resolved_config.json").open("w", encoding="utf-8") as f:
         json.dump(pretty_config(cfg), f, indent=2)
 
-    trainer.train()
-    trainer.save_model(cfg.output_dir)
-    processor.save_pretrained(cfg.output_dir)
+    resume_checkpoint = _resolve_resume_checkpoint(output_dir)
+    if resume_checkpoint is not None:
+        print(f"Resuming training from checkpoint: {resume_checkpoint}")
+
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
+    if trainer.args.should_save:
+        best_checkpoint = getattr(trainer.state, "best_model_checkpoint", None)
+        if best_checkpoint:
+            print(f"Exporting best checkpoint from {best_checkpoint} to {cfg.output_dir}.")
+            _export_best_checkpoint(Path(best_checkpoint), output_dir)
+        else:
+            trainer.save_model(cfg.output_dir)
+        processor.save_pretrained(cfg.output_dir)
+        _validate_saved_adapter(output_dir)
 
 
 if __name__ == "__main__":

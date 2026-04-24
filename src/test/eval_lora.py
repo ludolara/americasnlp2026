@@ -19,6 +19,8 @@ from test.eval import (
     write_jsonl,
 )
 
+EVAL_PROMPT_VERSION = "translation_prompt_v1"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -179,6 +181,23 @@ def _load_adapter_base_model_name(model_name_or_path: str) -> str | None:
     return base_model_name or None
 
 
+def _assert_adapter_has_weights(model_name_or_path: str) -> None:
+    adapter_path = Path(model_name_or_path) / "adapter_model.safetensors"
+    if not adapter_path.exists():
+        return
+
+    from safetensors import safe_open
+
+    with safe_open(adapter_path, framework="pt") as f:
+        if any(True for _ in f.keys()):
+            return
+
+    raise ValueError(
+        f"Adapter at {adapter_path} contains zero tensors. Refusing to evaluate an "
+        "empty LoRA export because that silently falls back to base-model behavior."
+    )
+
+
 def _resolve_model_dtype(dtype_name: str):
     import torch
 
@@ -217,9 +236,54 @@ def _read_json(path: Path) -> Any:
         return json.load(f)
 
 
+def _file_fingerprint(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _model_fingerprint(model_name_or_path: str) -> dict[str, Any]:
+    model_path = Path(model_name_or_path)
+    if not model_path.exists():
+        return {"path": model_name_or_path, "type": "external"}
+
+    fingerprint_files = [
+        model_path / "adapter_config.json",
+        model_path / "adapter_model.safetensors",
+    ]
+    existing_files = [path for path in fingerprint_files if path.exists()]
+    if not existing_files:
+        existing_files = [
+            path
+            for path in (
+                model_path / "config.json",
+                model_path / "generation_config.json",
+                model_path / "model.safetensors",
+            )
+            if path.exists()
+        ]
+
+    return {
+        "path": str(model_path),
+        "files": [_file_fingerprint(path) for path in existing_files],
+    }
+
+
+def _get_model_fingerprint(args: argparse.Namespace) -> dict[str, Any]:
+    cached = getattr(args, "_model_fingerprint", None)
+    if cached is None:
+        cached = _model_fingerprint(args.model_name_or_path)
+        setattr(args, "_model_fingerprint", cached)
+    return cached
+
+
 def _build_run_identity(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "model_name_or_path": args.model_name_or_path,
+        "model_fingerprint": _get_model_fingerprint(args),
         "dataset_path": args.dataset_path,
         "split": args.split,
         "languages": args.languages,
@@ -229,6 +293,7 @@ def _build_run_identity(args: argparse.Namespace) -> dict[str, Any]:
         "generation_budget": args.generation_budget,
         "dtype": args.dtype,
         "limit": args.limit,
+        "prompt_version": EVAL_PROMPT_VERSION,
     }
 
 
@@ -498,6 +563,7 @@ def load_lora_model(model_name_or_path: str, dtype_name: str):
         **model_kwargs,
     )
     if adapter_base_model_name is not None:
+        _assert_adapter_has_weights(model_name_or_path)
         model = PeftModel.from_pretrained(
             model,
             model_name_or_path,

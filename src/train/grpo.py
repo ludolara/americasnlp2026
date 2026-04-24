@@ -98,6 +98,7 @@ def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
         "learning_rate": cfg.learning_rate,
         "num_train_epochs": cfg.num_train_epochs,
         "warmup_steps": cfg.warmup_steps,
+        "warmup_ratio": getattr(cfg, "warmup_ratio", None),
         "weight_decay": cfg.weight_decay,
         "lr_scheduler_type": cfg.lr_scheduler_type,
         "logging_steps": cfg.logging_steps,

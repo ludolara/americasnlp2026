@@ -29,6 +29,10 @@ RESULTS_DIR="${RESULTS_DIR:-results}"
 NUM_EXAMPLES="${NUM_EXAMPLES:-10}"
 SHOW_EXAMPLES="${SHOW_EXAMPLES:-1}"
 LIMIT="${LIMIT:-}"
+EVAL_LANGUAGE="${EVAL_LANGUAGE:-}"
+EVAL_LANGUAGES_RAW="${EVAL_LANGUAGES:-hch,bzd,gn}"
+EVAL_LANGUAGES_RAW="${EVAL_LANGUAGES_RAW//,/ }"
+read -r -a EVAL_LANGUAGE_LIST <<< "$EVAL_LANGUAGES_RAW"
 if [[ "$#" -gt 0 ]]; then
   SCORE_BUDGETS=("$@")
 else
@@ -56,8 +60,19 @@ cmd=(
   --dtype "$DTYPE"
   --results-dir "$RESULTS_DIR"
   --num-examples "$NUM_EXAMPLES"
-  --languages hch,bzd,gn
 )
+
+if [[ -n "$EVAL_LANGUAGE" ]]; then
+  cmd+=(--languages "$EVAL_LANGUAGE")
+else
+  if [[ "${#EVAL_LANGUAGE_LIST[@]}" -eq 0 ]]; then
+    echo "No evaluation languages configured." >&2
+    exit 1
+  fi
+
+  EVAL_LANGUAGES_CSV="$(IFS=,; echo "${EVAL_LANGUAGE_LIST[*]}")"
+  cmd+=(--languages "$EVAL_LANGUAGES_CSV")
+fi
 
 if [[ "${#SCORE_BUDGETS[@]}" -gt 0 ]]; then
   cmd+=(--score-budgets "${SCORE_BUDGETS[@]}")

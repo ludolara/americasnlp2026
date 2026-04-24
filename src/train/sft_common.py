@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import inspect
 import os
 import shutil
+from collections import OrderedDict
 from pathlib import Path
 
 from datasets import Dataset
+import torch
 from torch.utils.data import Sampler
 from transformers import EarlyStoppingCallback, TrainingArguments
+from transformers.trainer import TRAINING_ARGS_NAME
 from trl import SFTTrainer
 
 try:
@@ -34,6 +38,110 @@ class MultilingualSFTTrainer(SFTTrainer):
         if self._train_sampler_override is not None:
             return self._train_sampler_override
         return super()._get_train_sampler(train_dataset)
+
+    def _should_use_zero3_adapter_only_save(self) -> bool:
+        if not getattr(self, "is_deepspeed_enabled", False):
+            return False
+        if not getattr(self.args, "save_only_model", False):
+            return False
+
+        deepspeed_plugin = getattr(getattr(self, "accelerator", None), "state", None)
+        deepspeed_plugin = getattr(deepspeed_plugin, "deepspeed_plugin", None)
+        if getattr(deepspeed_plugin, "zero_stage", None) != 3:
+            return False
+
+        return hasattr(self.model, "peft_config") and hasattr(
+            self.model, "save_pretrained"
+        )
+
+    def _gather_zero3_trainable_state_dict(self) -> OrderedDict[str, torch.Tensor] | None:
+        try:
+            import deepspeed
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "DeepSpeed is required to gather ZeRO-3 adapter weights."
+            ) from exc
+
+        state_dict: OrderedDict[str, torch.Tensor] | None = None
+        if self.args.should_save:
+            state_dict = OrderedDict()
+
+        zero3_engine = getattr(self, "deepspeed", None)
+        if zero3_engine is None and getattr(self, "model_wrapped", None) is not self.model:
+            zero3_engine = getattr(self, "model_wrapped", None)
+
+        def add_module_state(module: torch.nn.Module, prefix: str = "") -> None:
+            module_trainable_params = [
+                param for param in module.parameters(recurse=False) if param.requires_grad
+            ]
+            gather_ctx = (
+                deepspeed.zero.GatheredParameters(
+                    module_trainable_params,
+                    # Mirror DeepSpeed's own ZeRO-3 consolidation path by
+                    # gathering one module at a time and forcing release from rank 0.
+                    modifier_rank=0,
+                )
+                if module_trainable_params
+                else nullcontext()
+            )
+
+            with gather_ctx:
+                if state_dict is not None:
+                    for name, param in module.named_parameters(recurse=False):
+                        if param.requires_grad:
+                            state_dict[prefix + name] = param.detach().cpu().clone()
+
+            for name, child in module.named_children():
+                if child is not None:
+                    add_module_state(child, prefix + name + ".")
+
+        if (
+            zero3_engine is not None
+            and hasattr(zero3_engine, "_optimizer_has_ckpt_event_prologue")
+            and zero3_engine._optimizer_has_ckpt_event_prologue()
+        ):
+            zero3_engine.optimizer.checkpoint_event_prologue()
+
+        try:
+            add_module_state(self.model)
+        finally:
+            if (
+                zero3_engine is not None
+                and hasattr(zero3_engine, "_optimizer_has_ckpt_event_epilogue")
+                and zero3_engine._optimizer_has_ckpt_event_epilogue()
+            ):
+                zero3_engine.optimizer.checkpoint_event_epilogue()
+
+        return state_dict
+
+    def save_model(self, output_dir: str | None = None, _internal_call: bool = False):
+        if not self._should_use_zero3_adapter_only_save():
+            return super().save_model(output_dir, _internal_call=_internal_call)
+
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        state_dict = self._gather_zero3_trainable_state_dict()
+
+        if self.args.should_save:
+            os.makedirs(output_dir, exist_ok=True)
+            self.model.save_pretrained(
+                output_dir,
+                state_dict=state_dict,
+                safe_serialization=self.args.save_safetensors,
+            )
+
+            if self.processing_class is not None:
+                self.processing_class.save_pretrained(output_dir)
+            elif (
+                self.data_collator is not None
+                and hasattr(self.data_collator, "tokenizer")
+                and self.data_collator.tokenizer is not None
+            ):
+                self.data_collator.tokenizer.save_pretrained(output_dir)
+
+            torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+
+        if self.args.push_to_hub and not _internal_call:
+            self.push_to_hub(commit_message="Model save", revision=self.args.hub_revision)
 
 
 def _discover_cuda_home() -> Path | None:
@@ -147,12 +255,72 @@ def prime_deepspeed_for_model_loading(training_args):
     return deepspeed_init
 
 
+def _configure_deepspeed_scheduler(training_args) -> None:
+    deepspeed_init = getattr(training_args, "hf_deepspeed_config", None)
+    if deepspeed_init is None:
+        return
+
+    config = deepspeed_init.config
+    if "scheduler" in config:
+        return
+
+    scheduler_type = getattr(training_args, "lr_scheduler_type", "linear")
+    scheduler_type = getattr(scheduler_type, "value", scheduler_type)
+    scheduler_type = str(scheduler_type).lower()
+    learning_rate = float(training_args.learning_rate)
+
+    if scheduler_type == "linear":
+        config["scheduler"] = {
+            "type": "WarmupDecayLR",
+            "params": {
+                "warmup_min_lr": 0,
+                "warmup_max_lr": learning_rate,
+                "warmup_num_steps": "auto",
+                "total_num_steps": "auto",
+                "warmup_type": "linear",
+            },
+        }
+        return
+
+    if scheduler_type == "cosine":
+        config["scheduler"] = {
+            "type": "WarmupCosineLR",
+            "params": {
+                "warmup_min_ratio": 0.0,
+                "warmup_num_steps": "auto",
+                "total_num_steps": "auto",
+                "cos_min_ratio": 0.0,
+                "warmup_type": "linear",
+            },
+        }
+        return
+
+    if scheduler_type == "constant":
+        config["scheduler"] = {
+            "type": "WarmupLR",
+            "params": {
+                "warmup_min_lr": 0,
+                "warmup_max_lr": learning_rate,
+                "warmup_num_steps": "auto",
+                "warmup_type": "linear",
+            },
+        }
+        return
+
+    raise ValueError(
+        "DeepSpeed training currently supports only linear, cosine, and constant "
+        f"lr_scheduler_type values via this trainer, got {scheduler_type!r}."
+    )
+
+
 def build_sft_args(cfg, has_eval: bool):
     args_cls = SFTConfig if SFTConfig is not None else TrainingArguments
     params = inspect.signature(args_cls.__init__).parameters
 
     strategy = "steps" if has_eval else "no"
-    load_best_model = has_eval and cfg.early_stopping_patience is not None
+    track_best_metric = has_eval and cfg.early_stopping_patience is not None
+    save_only_model = getattr(cfg, "save_only_model", False)
+    load_best_model = track_best_metric and not save_only_model
     kwargs = {
         "output_dir": cfg.output_dir,
         "per_device_train_batch_size": cfg.per_device_train_batch_size,
@@ -161,6 +329,7 @@ def build_sft_args(cfg, has_eval: bool):
         "learning_rate": cfg.learning_rate,
         "num_train_epochs": cfg.num_train_epochs,
         "warmup_steps": cfg.warmup_steps,
+        "warmup_ratio": getattr(cfg, "warmup_ratio", None),
         "weight_decay": cfg.weight_decay,
         "lr_scheduler_type": cfg.lr_scheduler_type,
         "logging_steps": cfg.logging_steps,
@@ -170,9 +339,10 @@ def build_sft_args(cfg, has_eval: bool):
         "eval_strategy": strategy,
         "save_strategy": "steps",
         "save_total_limit": cfg.save_total_limit,
+        "save_only_model": save_only_model,
         "load_best_model_at_end": load_best_model,
-        "metric_for_best_model": "eval_loss" if load_best_model else None,
-        "greater_is_better": False if load_best_model else None,
+        "metric_for_best_model": "eval_loss" if track_best_metric else None,
+        "greater_is_better": False if track_best_metric else None,
         "bf16": cfg.bf16,
         "fp16": cfg.fp16,
         "gradient_checkpointing": cfg.gradient_checkpointing,
@@ -194,6 +364,7 @@ def build_sft_args(cfg, has_eval: bool):
 
     args = args_cls(**filtered)
     prime_deepspeed_for_model_loading(args)
+    _configure_deepspeed_scheduler(args)
     return args
 
 

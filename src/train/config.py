@@ -41,7 +41,8 @@ class SFTTrainConfig(DatasetConfigMixin):
     gradient_accumulation_steps: int = 1
     learning_rate: float = 2e-5
     num_train_epochs: float = 3.0
-    warmup_steps: float | int | None = 0.03
+    warmup_steps: int | None = 0
+    warmup_ratio: float | None = None
     weight_decay: float = 0.01
     lr_scheduler_type: str = "linear"
 
@@ -49,6 +50,7 @@ class SFTTrainConfig(DatasetConfigMixin):
     save_steps: int = 200
     eval_steps: int = 200
     save_total_limit: int = 3
+    save_only_model: bool = False
     early_stopping_patience: int | None = None
     early_stopping_threshold: float | None = None
 
@@ -106,7 +108,8 @@ class GRPOTrainConfig(DatasetConfigMixin):
     gradient_accumulation_steps: int = 1
     learning_rate: float = 1e-6
     num_train_epochs: float = 3.0
-    warmup_steps: float | int | None = 0.03
+    warmup_steps: int | None = 0
+    warmup_ratio: float | None = None
     weight_decay: float = 0.0
     lr_scheduler_type: str = "linear"
 
@@ -127,15 +130,23 @@ ConfigT = TypeVar("ConfigT", SFTTrainConfig, LoraSFTTrainConfig, GRPOTrainConfig
 
 def _normalize_warmup_fields(raw: dict) -> dict:
     normalized = dict(raw)
-    if normalized.get("warmup_steps") is not None and normalized.get("warmup_ratio") is not None:
+    warmup_steps = normalized.get("warmup_steps")
+    warmup_ratio = normalized.get("warmup_ratio")
+
+    if warmup_steps not in (None, 0) and warmup_ratio is not None:
         raise ValueError("Set only one of `warmup_steps` or `warmup_ratio`.")
 
-    if normalized.get("warmup_ratio") is not None:
-        normalized["warmup_steps"] = normalized.pop("warmup_ratio")
-
-    warmup_steps = normalized.get("warmup_steps")
-    if isinstance(warmup_steps, float) and warmup_steps.is_integer():
-        normalized["warmup_steps"] = int(warmup_steps)
+    if isinstance(warmup_steps, float):
+        if warmup_steps.is_integer():
+            normalized["warmup_steps"] = int(warmup_steps)
+        elif 0 < warmup_steps < 1:
+            normalized["warmup_steps"] = 0
+            normalized["warmup_ratio"] = warmup_steps
+        else:
+            raise ValueError(
+                "`warmup_steps` must be an integer step count. "
+                "Use `warmup_ratio` for fractional warmup values."
+            )
 
     return normalized
 
@@ -164,6 +175,10 @@ def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
     language_sampling_alpha = raw.get("language_sampling_alpha")
     if language_sampling_alpha is not None and language_sampling_alpha < 0:
         raise ValueError("language_sampling_alpha must be >= 0.")
+
+    warmup_ratio = raw.get("warmup_ratio")
+    if warmup_ratio is not None and not (0 <= warmup_ratio <= 1):
+        raise ValueError("warmup_ratio must be between 0 and 1.")
 
     return config_cls(**raw)
 

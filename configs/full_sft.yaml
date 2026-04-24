@@ -18,7 +18,7 @@ learning_rate: 2.0e-5
 num_train_epochs: 60.0
 # warmup_steps: 0.03
 # weight_decay: 0.01
-lr_scheduler_type: "linear"
+# lr_scheduler_type: "linear"
 
 logging_steps: 25
 save_steps: 50

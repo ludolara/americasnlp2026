@@ -3,6 +3,7 @@
 __all__ = [
     "config",
     "constants",
+    "captioning_lora_sft",
     "data",
     "full_sft",
     "grpo",
