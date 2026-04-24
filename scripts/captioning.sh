@@ -28,7 +28,7 @@ fi
 DATASET_PATH="${DATASET_PATH:-data/captioning}"
 SPLIT="${SPLIT:-test}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-32}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-128}"
 DTYPE="${DTYPE:-bfloat16}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/captioning}"
 TEAM_NAME="${TEAM_NAME:-mila}"

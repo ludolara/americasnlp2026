@@ -50,7 +50,7 @@ else
   ./wixarika/bin/python -m train.lora_sft --config "$SFT_CONFIG"
 fi
 
-TEST_LANGUAGES=(hch bzd gn)
+TEST_LANGUAGES=(hch bzd gn nah)
 
 for language in "${TEST_LANGUAGES[@]}"; do
   job_id="$(

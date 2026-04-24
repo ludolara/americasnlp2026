@@ -47,6 +47,12 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing Guarani-Spanish files.",
     )
     parser.add_argument(
+        "--nahuatl-dir",
+        type=Path,
+        default=Path("data/raw/nahuatl-spanish"),
+        help="Directory containing Nahuatl-Spanish files.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("data/americasnlp2026"),
@@ -250,6 +256,7 @@ def main() -> None:
     wixarika_dir = args.wixarika_dir
     bribri_dir = args.bribri_dir
     guarani_dir = args.guarani_dir
+    nahuatl_dir = args.nahuatl_dir
     output_dir = args.output_dir
 
     required = [
@@ -269,6 +276,12 @@ def main() -> None:
         guarani_dir / "dev.gn",
         guarani_dir / "extra.tsv",
         guarani_dir / "synthetic.tsv",
+        nahuatl_dir / "train.es",
+        nahuatl_dir / "train.nah",
+        nahuatl_dir / "dev.es",
+        nahuatl_dir / "dev.nah",
+        nahuatl_dir / "extra.tsv",
+        nahuatl_dir / "synthetic.tsv",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -332,6 +345,30 @@ def main() -> None:
             source_type="synthetic",
             trim=args.trim,
         ),
+        _build_parallel_split(
+            nahuatl_dir / "train.es",
+            nahuatl_dir / "train.nah",
+            split_name="train",
+            language="nahuatl",
+            language_code="nah",
+            trim=args.trim,
+        ),
+        _build_tsv_split(
+            nahuatl_dir / "extra.tsv",
+            split_name="nahuatl extra",
+            language="nahuatl",
+            language_code="nah",
+            source_type="extra",
+            trim=args.trim,
+        ),
+        _build_tsv_split(
+            nahuatl_dir / "synthetic.tsv",
+            split_name="nahuatl synthetic",
+            language="nahuatl",
+            language_code="nah",
+            source_type="synthetic",
+            trim=args.trim,
+        ),
     ]
 
     validation_parts = [
@@ -359,6 +396,14 @@ def main() -> None:
             language_code="gn",
             trim=args.trim,
         ),
+        _build_parallel_split(
+            nahuatl_dir / "dev.es",
+            nahuatl_dir / "dev.nah",
+            split_name="dev",
+            language="nahuatl",
+            language_code="nah",
+            trim=args.trim,
+        ),
     ]
 
     test_parts: list[Dataset] = []
@@ -380,6 +425,12 @@ def main() -> None:
             "guarani",
             "gn",
             "gn",
+        ),
+        (
+            nahuatl_dir,
+            "nahuatl",
+            "nah",
+            "nah",
         ),
     ]
     for raw_dir, language, language_code, target_suffix in optional_tests:
