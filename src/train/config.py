@@ -101,6 +101,7 @@ class GRPOTrainConfig(DatasetConfigMixin):
     top_p: float = 1.0
     top_k: int = 0
     beta: float = 0.0
+    ds3_gather_for_generation: bool = True
     language_sampling_alpha: float = 1.0
 
     per_device_train_batch_size: int = 4

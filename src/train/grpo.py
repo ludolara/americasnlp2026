@@ -123,6 +123,7 @@ def _build_grpo_args(cfg, has_eval: bool) -> GRPOConfig:
         "top_p": cfg.top_p,
         "top_k": cfg.top_k,
         "beta": cfg.beta,
+        "ds3_gather_for_generation": cfg.ds3_gather_for_generation,
     }
 
     filtered = {k: v for k, v in kwargs.items() if k in params and v is not None}
