@@ -9,7 +9,7 @@ bidirectional_translation: true
 output_dir: "outputs/aya-vision-32b-americas-grpo"
 auto_resume_from_checkpoint: true
 # resume_from_checkpoint: "outputs/aya-vision-32b-americas-grpo/checkpoint-750"
-eval_sample_size: 200
+eval_sample_size: 400
 eval_language_sample_weights:
   bribri: 16.9
   guarani: 37.7

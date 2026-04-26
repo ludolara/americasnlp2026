@@ -426,7 +426,7 @@ class LoraGRPOTrainer(PatchedGRPOTrainer):
             return dataset
 
         global_step = int(getattr(self.state, "global_step", 0) or 0)
-        seed = int(getattr(self.args, "seed", 0) or 0) + global_step
+        seed = int(getattr(self.args, "seed", 0) or 0)
         sampled_dataset = sample_dataset_by_language(
             dataset,
             sample_size=self.eval_sample_size,
@@ -481,10 +481,8 @@ class LoraGRPOTrainer(PatchedGRPOTrainer):
             metric_key_prefix=metric_key_prefix,
         )
 
-    def _should_use_zero3_adapter_only_save(self) -> bool:
+    def _can_save_zero3_adapter(self) -> bool:
         if not getattr(self, "is_deepspeed_enabled", False):
-            return False
-        if not getattr(self.args, "save_only_model", False):
             return False
 
         deepspeed_plugin = getattr(getattr(self, "accelerator", None), "state", None)
@@ -560,14 +558,16 @@ class LoraGRPOTrainer(PatchedGRPOTrainer):
 
         return state_dict
 
-    def save_model(self, output_dir: str | None = None, _internal_call: bool = False):
-        if not self._should_use_zero3_adapter_only_save():
-            return super().save_model(output_dir, _internal_call=_internal_call)
-
+    def _save_zero3_adapter(self, output_dir: str | None = None) -> None:
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         state_dict = self._gather_zero3_trainable_state_dict()
 
         if self.args.should_save:
+            if not state_dict or not any("lora_" in key for key in state_dict):
+                raise RuntimeError(
+                    "DeepSpeed ZeRO-3 adapter export gathered no LoRA tensors."
+                )
+
             os.makedirs(output_dir, exist_ok=True)
             self.model.save_pretrained(
                 output_dir,
@@ -585,6 +585,29 @@ class LoraGRPOTrainer(PatchedGRPOTrainer):
                 self.data_collator.tokenizer.save_pretrained(output_dir)
 
             torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+
+    def save_lora_adapter(self, output_dir: str | None = None) -> None:
+        if not self._can_save_zero3_adapter():
+            self.save_model(output_dir, _internal_call=True)
+            return
+
+        self._save_zero3_adapter(output_dir)
+
+    def save_model(self, output_dir: str | None = None, _internal_call: bool = False):
+        if not self._can_save_zero3_adapter():
+            return super().save_model(output_dir, _internal_call=_internal_call)
+
+        if not getattr(self.args, "save_only_model", False):
+            result = super().save_model(output_dir, _internal_call=True)
+            self._save_zero3_adapter(output_dir)
+            if self.args.push_to_hub and not _internal_call:
+                self.push_to_hub(
+                    commit_message="Model save",
+                    revision=self.args.hub_revision,
+                )
+            return result
+
+        self._save_zero3_adapter(output_dir)
 
         if self.args.push_to_hub and not _internal_call:
             self.push_to_hub(
@@ -810,7 +833,7 @@ def main() -> None:
             )
             _export_best_checkpoint(Path(best_checkpoint), output_dir)
     else:
-        trainer.save_model(cfg.output_dir)
+        trainer.save_lora_adapter(cfg.output_dir)
 
     if trainer.args.should_save:
         tokenizer.save_pretrained(cfg.output_dir)

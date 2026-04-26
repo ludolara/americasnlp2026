@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import yaml
 from datasets import Dataset, DatasetDict, load_from_disk
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, set_seed
@@ -32,116 +33,293 @@ DEFAULT_PROMPT_TEMPLATE = (
     "Debe ser una descripcion culturalmente adecuada de la imagen. "
     "Responde solo con el pie de foto en {language}, sin explicaciones."
 )
+DEFAULT_CONFIG_PATH = "configs/captioning_lora_sft.yaml"
+DEFAULT_LANGUAGES = ["wixarika", "bribri", "guarani", "nahuatl"]
+DEFAULT_LORA_TARGET_MODULES = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
 
-def _parse_languages(raw_languages: list[str] | None) -> list[str] | None:
-    if raw_languages is None:
+def _parse_string_list(
+    raw_values: str | list[str] | None,
+    *,
+    arg_name: str,
+) -> list[str] | None:
+    if raw_values is None:
         return None
+    if isinstance(raw_values, str):
+        raw_items = [raw_values]
+    elif isinstance(raw_values, list):
+        raw_items = raw_values
+    else:
+        raise TypeError(f"{arg_name} must be a string, list of strings, or null.")
 
-    languages: list[str] = []
-    for raw_language in raw_languages:
-        for language in raw_language.split(","):
-            cleaned = language.strip()
-            if cleaned and cleaned not in languages:
-                languages.append(cleaned)
-    if not languages:
-        raise ValueError("--languages must include at least one non-empty language.")
-    return languages
+    values: list[str] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, str):
+            raise TypeError(f"{arg_name} entries must be strings.")
+        for item in raw_item.split(","):
+            cleaned = item.strip()
+            if cleaned and cleaned not in values:
+                values.append(cleaned)
+    if not values:
+        raise ValueError(f"{arg_name} must include at least one non-empty value.")
+    return values
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_languages(raw_languages: str | list[str] | None) -> list[str] | None:
+    return _parse_string_list(raw_languages, arg_name="--languages")
+
+
+def _load_config_defaults(config_path: str) -> dict[str, Any]:
+    path = Path(config_path)
+    with path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"Expected YAML mapping in {config_path!r}.")
+    return dict(raw)
+
+
+def _config_default(defaults: Mapping[str, Any], key: str, fallback: Any) -> Any:
+    return defaults[key] if key in defaults else fallback
+
+
+def _build_arg_parser(
+    *,
+    defaults: Mapping[str, Any],
+    config_path: str,
+) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="LoRA SFT for Aya Vision on labeled captioning validation data."
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=config_path,
+        help="Path to YAML training config.",
+    )
+    parser.add_argument(
         "--model-name-or-path",
         type=str,
-        default="outputs/v3/aya-vision-32b-americas",
+        default=_config_default(
+            defaults,
+            "model_name_or_path",
+            "outputs/v3/aya-vision-32b-americas",
+        ),
         help="Merged model path, base model path, or existing LoRA adapter to continue.",
     )
     parser.add_argument(
         "--dataset-path",
         type=str,
-        default="data/captioning",
+        default=_config_default(defaults, "dataset_path", "data/captioning"),
         help="Path to the captioning Hugging Face dataset saved with save_to_disk.",
     )
     parser.add_argument(
         "--train-split",
         type=str,
-        default="validation",
+        default=_config_default(defaults, "train_split", "validation"),
         help="Captioning split with target_caption labels.",
     )
     parser.add_argument(
         "--languages",
         type=str,
         nargs="+",
-        default=["hch,bzd,grn"],
+        default=_config_default(defaults, "languages", DEFAULT_LANGUAGES),
         help="Language filter by iso_lang, submission language, culture, or language name.",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="outputs/aya-vision-32b-americas-captioning",
+        default=_config_default(
+            defaults,
+            "output_dir",
+            "outputs/aya-vision-32b-americas-captioning",
+        ),
         help="Directory where the captioning LoRA adapter is saved.",
     )
     parser.add_argument(
         "--prompt-template",
         type=str,
-        default=DEFAULT_PROMPT_TEMPLATE,
+        default=_config_default(defaults, "prompt_template", DEFAULT_PROMPT_TEMPLATE),
         help="Python format string with {language}, {iso_lang}, and {culture}.",
     )
-    parser.add_argument("--max-seq-length", type=int, default=4096)
-    parser.add_argument("--per-device-train-batch-size", type=int, default=1)
-    parser.add_argument("--per-device-eval-batch-size", type=int, default=1)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=2.0e-5)
-    parser.add_argument("--num-train-epochs", type=float, default=20.0)
-    parser.add_argument("--warmup-ratio", type=float, default=0.03)
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--lr-scheduler-type", type=str, default="linear")
-    parser.add_argument("--logging-steps", type=int, default=5)
-    parser.add_argument("--save-steps", type=int, default=25)
-    parser.add_argument("--save-total-limit", type=int, default=3)
-    parser.add_argument("--language-sampling-alpha", type=float, default=1.0)
-    parser.add_argument("--lora-r", type=int, default=32)
-    parser.add_argument("--lora-alpha", type=int, default=64)
-    parser.add_argument("--lora-dropout", type=float, default=0.1)
-    parser.add_argument("--lora-bias", type=str, default="none")
+    parser.add_argument(
+        "--max-seq-length",
+        type=int,
+        default=_config_default(defaults, "max_seq_length", 4096),
+    )
+    parser.add_argument(
+        "--per-device-train-batch-size",
+        type=int,
+        default=_config_default(defaults, "per_device_train_batch_size", 1),
+    )
+    parser.add_argument(
+        "--per-device-eval-batch-size",
+        type=int,
+        default=_config_default(defaults, "per_device_eval_batch_size", 1),
+    )
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=_config_default(defaults, "gradient_accumulation_steps", 8),
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=_config_default(defaults, "learning_rate", 2.0e-5),
+    )
+    parser.add_argument(
+        "--num-train-epochs",
+        type=float,
+        default=_config_default(defaults, "num_train_epochs", 20.0),
+    )
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=_config_default(defaults, "warmup_ratio", 0.03),
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=_config_default(defaults, "weight_decay", 0.01),
+    )
+    parser.add_argument(
+        "--lr-scheduler-type",
+        type=str,
+        default=_config_default(defaults, "lr_scheduler_type", "linear"),
+    )
+    parser.add_argument(
+        "--logging-steps",
+        type=int,
+        default=_config_default(defaults, "logging_steps", 5),
+    )
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        default=_config_default(defaults, "save_steps", 25),
+    )
+    parser.add_argument(
+        "--save-total-limit",
+        type=int,
+        default=_config_default(defaults, "save_total_limit", 3),
+    )
+    parser.add_argument(
+        "--language-sampling-alpha",
+        type=float,
+        default=_config_default(defaults, "language_sampling_alpha", 1.0),
+    )
+    parser.add_argument(
+        "--lora-r",
+        type=int,
+        default=_config_default(defaults, "lora_r", 32),
+    )
+    parser.add_argument(
+        "--lora-alpha",
+        type=int,
+        default=_config_default(defaults, "lora_alpha", 64),
+    )
+    parser.add_argument(
+        "--lora-dropout",
+        type=float,
+        default=_config_default(defaults, "lora_dropout", 0.1),
+    )
+    parser.add_argument(
+        "--lora-bias",
+        type=str,
+        default=_config_default(defaults, "lora_bias", "none"),
+    )
     parser.add_argument(
         "--lora-target-modules",
         type=str,
         nargs="+",
-        default=["q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"],
+        default=_config_default(
+            defaults,
+            "lora_target_modules",
+            DEFAULT_LORA_TARGET_MODULES,
+        ),
         help="LoRA target modules. Accepts comma-separated values, space-separated values, or both.",
     )
-    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--bf16",
+        action=argparse.BooleanOptionalAction,
+        default=_config_default(defaults, "bf16", True),
+    )
+    parser.add_argument(
+        "--fp16",
+        action=argparse.BooleanOptionalAction,
+        default=_config_default(defaults, "fp16", False),
+    )
     parser.add_argument(
         "--gradient-checkpointing",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=_config_default(defaults, "gradient_checkpointing", True),
     )
     parser.add_argument(
         "--deepspeed",
         type=str,
-        default="configs/deepspeed_lora_zero3.json",
+        default=_config_default(
+            defaults,
+            "deepspeed",
+            "configs/deepspeed_lora_zero3.json",
+        ),
         help="DeepSpeed config path. Use an empty string to disable.",
     )
     parser.add_argument(
         "--ddp-find-unused-parameters",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=_config_default(defaults, "ddp_find_unused_parameters", False),
     )
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--report-to", type=str, default="none")
+    parser.add_argument("--seed", type=int, default=_config_default(defaults, "seed", 42))
+    parser.add_argument(
+        "--report-to",
+        type=str,
+        default=_config_default(defaults, "report_to", "none"),
+    )
     parser.add_argument(
         "--dry-run",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=_config_default(defaults, "dry_run", False),
         help="Build the captioning dataset and config, then exit before loading the model.",
     )
+    return parser
+
+
+def _validate_config_keys(
+    defaults: Mapping[str, Any],
+    parser: argparse.ArgumentParser,
+) -> None:
+    allowed = {
+        action.dest
+        for action in parser._actions
+        if action.dest not in {"help", "config"}
+    }
+    unknown = sorted(set(defaults) - allowed)
+    if unknown:
+        raise ValueError(
+            f"Unknown keys in captioning LoRA SFT config: {', '.join(unknown)}"
+        )
+
+
+def parse_args() -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument("--config", type=str, default=DEFAULT_CONFIG_PATH)
+    config_args, _ = config_parser.parse_known_args()
+
+    defaults = _load_config_defaults(config_args.config)
+    parser = _build_arg_parser(defaults=defaults, config_path=config_args.config)
+    _validate_config_keys(defaults, parser)
     args = parser.parse_args()
     args.languages = _parse_languages(args.languages)
-    args.lora_target_modules = _parse_languages(args.lora_target_modules)
+    args.lora_target_modules = _parse_string_list(
+        args.lora_target_modules,
+        arg_name="--lora-target-modules",
+    )
     if args.max_seq_length < 1:
         raise ValueError("--max-seq-length must be at least 1.")
     if args.per_device_train_batch_size < 1:

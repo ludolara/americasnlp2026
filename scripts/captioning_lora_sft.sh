@@ -29,57 +29,61 @@ if [[ -z "${CUDA_HOME:-}" ]] && command -v nvcc >/dev/null 2>&1; then
   fi
 fi
 
-MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas}"
-DATASET_PATH="${DATASET_PATH:-data/captioning}"
-TRAIN_SPLIT="${TRAIN_SPLIT:-validation}"
-LANGUAGES="${LANGUAGES:-hch,bzd,grn}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/aya-vision-32b-americas-captioning}"
+CAPTIONING_LORA_SFT_CONFIG="${CAPTIONING_LORA_SFT_CONFIG:-configs/captioning_lora_sft.yaml}"
+for ((arg_index = 1; arg_index <= $#; arg_index++)); do
+  arg="${!arg_index}"
+  case "$arg" in
+    --config)
+      next_index=$((arg_index + 1))
+      if [[ "$next_index" -le "$#" ]]; then
+        CAPTIONING_LORA_SFT_CONFIG="${!next_index}"
+      fi
+      ;;
+    --config=*) CAPTIONING_LORA_SFT_CONFIG="${arg#--config=}" ;;
+  esac
+done
 
-MAX_SEQ_LENGTH="${MAX_SEQ_LENGTH:-4096}"
-PER_DEVICE_TRAIN_BATCH_SIZE="${PER_DEVICE_TRAIN_BATCH_SIZE:-1}"
-PER_DEVICE_EVAL_BATCH_SIZE="${PER_DEVICE_EVAL_BATCH_SIZE:-1}"
-GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-1}"
-LEARNING_RATE="${LEARNING_RATE:-2.0e-5}"
-NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-10}"
-WARMUP_RATIO="${WARMUP_RATIO:-0.03}"
-WEIGHT_DECAY="${WEIGHT_DECAY:-0.01}"
-LOGGING_STEPS="${LOGGING_STEPS:-5}"
-SAVE_STEPS="${SAVE_STEPS:-25}"
-SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-3}"
-LANGUAGE_SAMPLING_ALPHA="${LANGUAGE_SAMPLING_ALPHA:-1.0}"
-DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-configs/deepspeed_lora_zero3.json}"
-DRY_RUN="${DRY_RUN:-0}"
+CONFIG_DRY_RUN="$(
+  CAPTIONING_LORA_SFT_CONFIG="$CAPTIONING_LORA_SFT_CONFIG" "$ROOT_DIR/wixarika/bin/python" - <<'PY'
+import os
+import yaml
+
+with open(os.environ["CAPTIONING_LORA_SFT_CONFIG"], "r", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+print("1" if cfg.get("dry_run") else "0")
+PY
+)"
+
+normalize_bool() {
+  case "${1,,}" in
+    1|true|yes|on) echo "1" ;;
+    0|false|no|off|"") echo "0" ;;
+    *)
+      echo "Invalid boolean value: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+LAUNCH_DRY_RUN="$(normalize_bool "${DRY_RUN:-$CONFIG_DRY_RUN}")"
 
 cmd=(
   "$ROOT_DIR/wixarika/bin/python" -m train.captioning_lora_sft
-  --model-name-or-path "$MODEL_PATH"
-  --dataset-path "$DATASET_PATH"
-  --train-split "$TRAIN_SPLIT"
-  --languages "$LANGUAGES"
-  --output-dir "$OUTPUT_DIR"
-  --max-seq-length "$MAX_SEQ_LENGTH"
-  --per-device-train-batch-size "$PER_DEVICE_TRAIN_BATCH_SIZE"
-  --per-device-eval-batch-size "$PER_DEVICE_EVAL_BATCH_SIZE"
-  --gradient-accumulation-steps "$GRADIENT_ACCUMULATION_STEPS"
-  --learning-rate "$LEARNING_RATE"
-  --num-train-epochs "$NUM_TRAIN_EPOCHS"
-  --warmup-ratio "$WARMUP_RATIO"
-  --weight-decay "$WEIGHT_DECAY"
-  --logging-steps "$LOGGING_STEPS"
-  --save-steps "$SAVE_STEPS"
-  --save-total-limit "$SAVE_TOTAL_LIMIT"
-  --language-sampling-alpha "$LANGUAGE_SAMPLING_ALPHA"
+  --config "$CAPTIONING_LORA_SFT_CONFIG"
 )
 
-if [[ -n "$DEEPSPEED_CONFIG" ]]; then
-  cmd+=(--deepspeed "$DEEPSPEED_CONFIG")
-else
-  cmd+=(--deepspeed "")
+if [[ -n "${DRY_RUN:-}" && "$LAUNCH_DRY_RUN" == "1" ]]; then
+  cmd+=(--dry-run)
+elif [[ -n "${DRY_RUN:-}" ]]; then
+  cmd+=(--no-dry-run)
 fi
 
-if [[ "$DRY_RUN" == "1" ]]; then
-  cmd+=(--dry-run)
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) LAUNCH_DRY_RUN="1" ;;
+    --no-dry-run) LAUNCH_DRY_RUN="0" ;;
+  esac
+done
 
 cmd+=("$@")
 
@@ -90,7 +94,7 @@ if [[ -z "$NUM_GPUS" && -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
 fi
 NUM_GPUS="${NUM_GPUS:-1}"
 
-if [[ "$NUM_GPUS" -gt 1 && "$DRY_RUN" != "1" ]]; then
+if [[ "$NUM_GPUS" -gt 1 && "$LAUNCH_DRY_RUN" != "1" ]]; then
   "$ROOT_DIR/wixarika/bin/accelerate" launch \
     --multi_gpu \
     --num_processes="$NUM_GPUS" \
