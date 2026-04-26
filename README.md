@@ -1,8 +1,6 @@
 # Aya Vision Americas
 
-This repository trains and runs Aya Vision for AmericasNLP translation and image captioning.
-
-The backbone model is `aya-vision-32b`.
+This repository trains and runs Aya Vision for AmericasNLP translation and image captioning. The backbone model is `aya-vision-32b`.
 
 The current workflow is:
 
