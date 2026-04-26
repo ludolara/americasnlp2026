@@ -1,24 +1,14 @@
-# Tiny Aya Translation Training with SFT and GRPO
+# Aya Vision Americas
 
-Minimal codebase to run:
+This repository trains and runs Aya Vision for AmericasNLP translation and image captioning.
 
-- supervised fine-tuning (SFT) with `trl.SFTTrainer`
-- GRPO fine-tuning with `trl.GRPOTrainer`
-- BLEU/chrF evaluation for translation checkpoints with chrF++ sentence selection
+The backbone model is `aya-vision-32b`.
 
-## What this does
+The current workflow is:
 
-- Full model fine-tuning (no LoRA/PEFT)
-- Works with:
-  - local `json/jsonl/csv/parquet` files
-  - local Hugging Face datasets saved with `save_to_disk`
-  - Hugging Face Hub datasets (`dataset_name`)
-- Supports common schemas:
-  - `text`
-  - `prompt` + `completion`
-  - `instruction` + `input` + `output`
-  - `es` + `wix` (formatted as translation SFT prompts)
-  - `messages` (chat template via tokenizer)
+1. LoRA SFT for machine translation.
+2. LoRA SFT for image captioning, initialized from the translation model.
+3. Caption generation.
 
 ## Setup
 
@@ -28,106 +18,182 @@ source wixarika/bin/activate
 uv pip install -r requirements.txt
 ```
 
-## Configure
-
-Edit one of:
-
-- `configs/full_sft.yaml`: full fine-tuning for the text Tiny Aya model
-- `configs/lora_sft.yaml`: LoRA fine-tuning for Aya Vision using text-only examples
-- Choose one data source:
-  - `local_dataset_path` (HF `save_to_disk` folder), or
-  - `dataset_name` (HF dataset), or
-  - `train_file` / `eval_file` (local files)
-- Optional: set `early_stopping_patience` to stop after that many evals without improvement in `eval_loss`
-- Optional: set `early_stopping_threshold` to require a minimum `eval_loss` improvement before patience resets
-
-## Run Full SFT
+The Slurm scripts set these environment variables by default:
 
 ```bash
-./scripts/full_sft.sh
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+export HF_HOME="$PWD/models/.hf"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 ```
 
-or
+## Data
+
+Machine translation uses the local Hugging Face dataset:
+
+```text
+data/americasnlp2026
+```
+
+Expected splits are `train`, `validation`, and `test`. The MT columns used by the config are:
+
+- `es`: Spanish source text
+- `target`: Indigenous-language target text
+- `language`: language name, such as `wixarika`, `bribri`, `guarani`, `nahuatl`
+- `language_code`: language code, such as `hch`, `bzd`, `gn`, `nah`
+
+Image captioning uses:
+
+```text
+data/captioning
+```
+
+Build it from raw captioning data when needed:
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.full_sft --config configs/full_sft.yaml
+PYTHONPATH=src ./wixarika/bin/python scripts/build_captioning_hf.py --overwrite
 ```
 
-## Run LoRA SFT
+The captioning dataset stores `validation` examples with labels and `test` examples for submission generation.
 
-```bash
-./scripts/lora_sft.sh
+## MT SFT
+
+The translation SFT config is [`configs/lora_sft.yaml`](configs/lora_sft.yaml).
+
+It starts from the `aya-vision-32b` backbone:
+
+```text
+models/aya-vision-32b
 ```
 
-or
+and writes the trained Americas translation adapter to:
+
+```text
+outputs/aya-vision-32b-americas
+```
+
+Run only the MT SFT training entrypoint with:
 
 ```bash
 PYTHONPATH=src ./wixarika/bin/python -m train.lora_sft --config configs/lora_sft.yaml
 ```
 
-## Run GRPO
-
-The default GRPO config starts from the SFT checkpoint and uses sentence-level `chrF++` as the reward.
+For a multi-GPU run:
 
 ```bash
-./scripts/grpo.sh
+PYTHONPATH=src ./wixarika/bin/accelerate launch \
+  --multi_gpu \
+  --num_processes=4 \
+  --num_machines=1 \
+  --mixed_precision=bf16 \
+  -m train.lora_sft \
+  --config configs/lora_sft.yaml
 ```
 
-or
+Important config fields:
+
+- `local_dataset_path: data/americasnlp2026`
+- `bidirectional_translation: true`
+- `language_sampling_alpha: 0.3`
+- `max_seq_length: 256`
+- `save_only_model: true`
+- `deepspeed: configs/deepspeed_lora_zero3.json`
+
+## Image Captioning SFT
+
+Captioning SFT starts from the MT SFT output:
+
+```text
+outputs/aya-vision-32b-americas
+```
+
+and writes the captioning adapter to:
+
+```text
+outputs/aya-vision-32b-americas-captioning
+```
+
+Run it with the Slurm/local wrapper:
 
 ```bash
-PYTHONPATH=src ./wixarika/bin/python -m train.grpo --config configs/grpo.yaml
+./scripts/captioning_lora_sft.sh
 ```
 
-## Notes for full fine-tuning
-
-- Full fine-tuning is memory-heavy. Start with:
-  - low batch size (`1`)
-  - gradient accumulation
-  - gradient checkpointing
-  - bf16 if supported by your GPU
-- If OOM:
-  - lower `max_seq_length`
-  - lower `per_device_train_batch_size`
-  - increase `gradient_accumulation_steps`
-- If you enable `early_stopping_patience`, keep `save_steps` as a multiple of `eval_steps`
-
-## Expected dataset examples
-
-Instruction format (`jsonl`):
-
-```json
-{"instruction":"Explain overfitting","input":"for a beginner","output":"Overfitting is when..."}
-```
-
-Prompt/completion format:
-
-```json
-{"prompt":"User: Explain overfitting\nAssistant:","completion":" Overfitting is when..."}
-```
-
-Pre-rendered text format:
-
-```json
-{"text":"<|user|> Explain overfitting\n<|assistant|> Overfitting is when..."}
-```
-
-## Test Evaluation
-
-Run BLEU/chrF evaluation on the dataset `test` split. The evaluator still uses sentence-level `chrF++` for best-of-n candidate selection:
+or directly:
 
 ```bash
-./scripts/test.sh
+PYTHONPATH=src ./wixarika/bin/python -m train.captioning_lora_sft \
+  --model-name-or-path outputs/aya-vision-32b-americas \
+  --dataset-path data/captioning \
+  --train-split validation \
+  --languages hch,bzd,grn \
+  --output-dir outputs/aya-vision-32b-americas-captioning
 ```
 
-Print five qualitative generation examples as well:
+Useful overrides:
 
 ```bash
-./scripts/test.sh --show-examples
+MODEL_PATH=outputs/aya-vision-32b-americas \
+DATASET_PATH=data/captioning \
+TRAIN_SPLIT=validation \
+LANGUAGES=hch,bzd,grn \
+OUTPUT_DIR=outputs/aya-vision-32b-americas-captioning \
+./scripts/captioning_lora_sft.sh
 ```
 
-Evaluate only specific target languages:
+The default captioning prompt asks Aya Vision to produce one culturally appropriate caption in the requested language and to output only the caption.
+
+## Captioning Process
+
+Generate captioning predictions from the captioning SFT output:
 
 ```bash
-./scripts/test.sh --languages wixarika
+./scripts/captioning.sh
 ```
+
+By default this uses:
+
+```text
+MODEL_PATH=outputs/aya-vision-32b-americas-captioning
+DATASET_PATH=data/captioning
+SPLIT=test
+LANGUAGES=hch,bzd,grn
+OUTPUT_DIR=results/captioning
+TEAM_NAME=mila
+VERSION=0
+```
+
+The process:
+
+1. Loads the selected captioning split.
+2. Filters by `LANGUAGES`.
+3. Resumes from `results/captioning/predictions.checkpoint.jsonl` if it exists.
+4. Generates captions with Aya Vision.
+5. Writes per-language JSONL files under `results/captioning/submission/`.
+6. Creates the submission zip at `results/captioning/<TEAM_NAME>.zip`.
+
+Example custom run:
+
+```bash
+MODEL_PATH=outputs/aya-vision-32b-americas-captioning \
+LANGUAGES=hch,bzd,grn \
+TEAM_NAME=mila \
+VERSION=0 \
+./scripts/captioning.sh
+```
+
+For a quick smoke test:
+
+```bash
+LIMIT=10 ./scripts/captioning.sh
+```
+
+The generated submission files are named like:
+
+```text
+bribri-0.jsonl
+guarani-0.jsonl
+wixarika-0.jsonl
+```
+
+Each row includes the original image metadata plus `predicted_caption`.

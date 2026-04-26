@@ -27,6 +27,102 @@ def format_weighted_mix(weights: Counter[str] | dict[str, float]) -> str:
     )
 
 
+def compute_language_sample_counts(
+    language_weights: dict[str, float],
+    sample_size: int,
+) -> dict[str, int]:
+    if sample_size < 1:
+        raise ValueError("sample_size must be >= 1.")
+
+    normalized_weights = {
+        str(language).strip(): float(weight)
+        for language, weight in language_weights.items()
+        if float(weight) > 0
+    }
+    total_weight = sum(normalized_weights.values())
+    if total_weight <= 0:
+        raise ValueError("language_weights must contain at least one positive weight.")
+
+    exact_counts = {
+        language: sample_size * weight / total_weight
+        for language, weight in normalized_weights.items()
+    }
+    counts = {
+        language: int(exact_count)
+        for language, exact_count in exact_counts.items()
+    }
+
+    remainder = sample_size - sum(counts.values())
+    if remainder > 0:
+        ranked_languages = sorted(
+            exact_counts,
+            key=lambda language: (-(exact_counts[language] - counts[language]), language),
+        )
+        for language in ranked_languages[:remainder]:
+            counts[language] += 1
+
+    return counts
+
+
+def sample_dataset_by_language(
+    dataset: Dataset,
+    *,
+    sample_size: int,
+    seed: int,
+    language_weights: dict[str, float] | None = None,
+    language_column: str = "language",
+) -> Dataset:
+    if sample_size < 1:
+        raise ValueError("sample_size must be >= 1.")
+    if sample_size > len(dataset):
+        raise ValueError(
+            f"Cannot sample {sample_size} rows from a dataset with {len(dataset)} rows."
+        )
+    if language_column not in dataset.column_names:
+        available = ", ".join(dataset.column_names)
+        raise ValueError(
+            f"Missing language column '{language_column}'. Available: {available}"
+        )
+
+    rng = random.Random(seed)
+    if language_weights is None:
+        return dataset.select(rng.sample(range(len(dataset)), k=sample_size))
+
+    language_to_indices: dict[str, list[int]] = defaultdict(list)
+    for index, language in enumerate(dataset[language_column]):
+        language_to_indices[str(language).strip()].append(index)
+
+    sample_counts = compute_language_sample_counts(language_weights, sample_size)
+    missing_languages = [
+        language
+        for language, count in sample_counts.items()
+        if count > 0 and language not in language_to_indices
+    ]
+    if missing_languages:
+        available = ", ".join(sorted(language_to_indices))
+        missing = ", ".join(sorted(missing_languages))
+        raise ValueError(
+            f"Requested eval sample languages not found: {missing}. Available: {available}"
+        )
+
+    insufficient_languages = [
+        f"{language} requested={count} available={len(language_to_indices[language])}"
+        for language, count in sorted(sample_counts.items())
+        if count > len(language_to_indices[language])
+    ]
+    if insufficient_languages:
+        details = "; ".join(insufficient_languages)
+        raise ValueError(f"Not enough eval rows for requested language mix: {details}")
+
+    selected_indices: list[int] = []
+    for language, count in sorted(sample_counts.items()):
+        if count > 0:
+            selected_indices.extend(rng.sample(language_to_indices[language], k=count))
+
+    rng.shuffle(selected_indices)
+    return dataset.select(selected_indices)
+
+
 def compute_smoothed_mix(counts: Counter[str], alpha: float) -> dict[str, float]:
     return {
         language: count ** alpha

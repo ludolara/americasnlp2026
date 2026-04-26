@@ -392,6 +392,7 @@ def build_grpo_dataset(
             ),
             "source": source,
             "reference": reference,
+            "dataset_language": str(example.get("language") or "").strip(),
         }
         if "language" in example:
             row["language"] = target_name

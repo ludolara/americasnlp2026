@@ -6,9 +6,15 @@ source_column: "es"
 target_column: "target"
 bidirectional_translation: true
 
-output_dir: "outputs/aya-vision-32b-americas-lora-grpo"
+output_dir: "outputs/aya-vision-32b-americas-grpo"
 auto_resume_from_checkpoint: true
-# resume_from_checkpoint: "outputs/aya-vision-32b-americas-lora-grpo/checkpoint-750"
+# resume_from_checkpoint: "outputs/aya-vision-32b-americas-grpo/checkpoint-750"
+eval_sample_size: 200
+eval_language_sample_weights:
+  bribri: 16.9
+  guarani: 37.7
+  nahuatl: 25.0
+  wixarika: 20.4
 max_completion_length: 256
 num_generations: 8
 temperature: 0.9
@@ -22,14 +28,14 @@ per_device_train_batch_size: 20
 per_device_eval_batch_size: 20
 gradient_accumulation_steps: 1
 learning_rate: 1.0e-6
-num_train_epochs: 60
+num_train_epochs: 30
 warmup_ratio: 0.03
 # weight_decay: 0.0
 lr_scheduler_type: "linear"
 
-logging_steps: 10
-save_steps: 10
-eval_steps: 10
+logging_steps: 5
+save_steps: 15
+eval_steps: 15
 save_total_limit: 3
 save_only_model: false
 early_stopping_patience: 3

@@ -5,7 +5,7 @@ import inspect
 import json
 import os
 import shutil
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -28,7 +28,11 @@ from transformers.trainer import TRAINING_ARGS_NAME
 from transformers.trainer_utils import get_last_checkpoint
 from trl import GRPOConfig
 
-from train.config import GRPOTrainConfig, _normalize_warmup_fields
+from train.config import (
+    GRPOTrainConfig,
+    _normalize_warmup_fields,
+    _validate_config_values,
+)
 from train.data import ensure_chat_template, load_datasets, prepare_grpo_splits
 from train.grpo import (
     PatchedGRPOTrainer,
@@ -36,6 +40,7 @@ from train.grpo import (
     _build_train_sampler,
     build_chrf_reward,
 )
+from train.language_sampling import format_weighted_mix, sample_dataset_by_language
 from train.sft_common import (
     _configure_deepspeed_scheduler,
     ensure_cuda_home,
@@ -47,6 +52,8 @@ from train.sft_common import (
 class LoraGRPOTrainConfig(GRPOTrainConfig):
     model_name_or_path: str = "outputs/aya-vision-32b-americas"
     output_dir: str = "outputs/aya-vision-32b-americas-lora-grpo"
+    eval_sample_size: int | None = None
+    eval_language_sample_weights: dict[str, float] | None = None
 
     save_only_model: bool = True
     deepspeed: str | None = None
@@ -97,21 +104,7 @@ def load_lora_grpo_config(path: str | Path) -> LoraGRPOTrainConfig:
         unknown_str = ", ".join(unknown)
         raise ValueError(f"Unknown config keys in {config_path}: {unknown_str}")
 
-    patience = raw.get("early_stopping_patience")
-    if patience is not None and patience < 1:
-        raise ValueError("early_stopping_patience must be >= 1 when set")
-
-    threshold = raw.get("early_stopping_threshold")
-    if threshold is not None and threshold < 0:
-        raise ValueError("early_stopping_threshold must be >= 0 when set")
-
-    language_sampling_alpha = raw.get("language_sampling_alpha")
-    if language_sampling_alpha is not None and language_sampling_alpha < 0:
-        raise ValueError("language_sampling_alpha must be >= 0.")
-
-    warmup_ratio = raw.get("warmup_ratio")
-    if warmup_ratio is not None and not (0 <= warmup_ratio <= 1):
-        raise ValueError("warmup_ratio must be between 0 and 1.")
+    _validate_config_values(raw)
 
     return LoraGRPOTrainConfig(**raw)
 
@@ -411,11 +404,82 @@ def _load_model(cfg: LoraGRPOTrainConfig, model_load_path: str):
 
 
 class LoraGRPOTrainer(PatchedGRPOTrainer):
-    def __init__(self, *args, train_sampler: Sampler[int] | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        train_sampler: Sampler[int] | None = None,
+        eval_sample_size: int | None = None,
+        eval_language_sample_weights: dict[str, float] | None = None,
+        eval_language_column: str = "dataset_language",
+        **kwargs,
+    ):
+        self.eval_sample_size = eval_sample_size
+        self.eval_language_sample_weights = eval_language_sample_weights
+        self.eval_language_column = eval_language_column
         super().__init__(*args, train_sampler=train_sampler, **kwargs)
 
     def _get_train_sampler(self, dataset: Dataset | None = None):
         return super()._get_train_sampler(dataset)
+
+    def _sample_eval_dataset(self, dataset: Dataset, metric_key_prefix: str) -> Dataset:
+        if self.eval_sample_size is None:
+            return dataset
+
+        global_step = int(getattr(self.state, "global_step", 0) or 0)
+        seed = int(getattr(self.args, "seed", 0) or 0) + global_step
+        sampled_dataset = sample_dataset_by_language(
+            dataset,
+            sample_size=self.eval_sample_size,
+            seed=seed,
+            language_weights=self.eval_language_sample_weights,
+            language_column=self.eval_language_column,
+        )
+
+        if self.is_world_process_zero():
+            counts = Counter(
+                str(language).strip()
+                for language in sampled_dataset[self.eval_language_column]
+            )
+            mix = format_weighted_mix(counts)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            suffix = f" ({mix})" if mix else ""
+            print(
+                f"[lora-grpo {timestamp}] Eval sample for {metric_key_prefix} "
+                f"at step {global_step}: {len(sampled_dataset)} rows{suffix}.",
+                flush=True,
+            )
+
+        return sampled_dataset
+
+    def evaluate(
+        self,
+        eval_dataset: Dataset | dict[str, Dataset] | None = None,
+        ignore_keys: list[str] | None = None,
+        metric_key_prefix: str = "eval",
+    ):
+        selected_eval_dataset = (
+            self.eval_dataset if eval_dataset is None else eval_dataset
+        )
+
+        if isinstance(selected_eval_dataset, Dataset):
+            selected_eval_dataset = self._sample_eval_dataset(
+                selected_eval_dataset,
+                metric_key_prefix,
+            )
+        elif isinstance(selected_eval_dataset, dict):
+            selected_eval_dataset = {
+                name: self._sample_eval_dataset(
+                    dataset,
+                    f"{metric_key_prefix}_{name}",
+                )
+                for name, dataset in selected_eval_dataset.items()
+            }
+
+        return super().evaluate(
+            eval_dataset=selected_eval_dataset,
+            ignore_keys=ignore_keys,
+            metric_key_prefix=metric_key_prefix,
+        )
 
     def _should_use_zero3_adapter_only_save(self) -> bool:
         if not getattr(self, "is_deepspeed_enabled", False):
@@ -718,6 +782,8 @@ def main() -> None:
         processing_class=tokenizer,
         callbacks=callbacks,
         train_sampler=train_sampler,
+        eval_sample_size=cfg.eval_sample_size,
+        eval_language_sample_weights=cfg.eval_language_sample_weights,
     )
     _ = deepspeed_init
 

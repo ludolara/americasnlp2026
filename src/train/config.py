@@ -152,19 +152,7 @@ def _normalize_warmup_fields(raw: dict) -> dict:
     return normalized
 
 
-def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
-    config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-
-    raw = _normalize_warmup_fields(raw)
-
-    valid_fields = set(config_cls.__dataclass_fields__.keys())
-    unknown = sorted(set(raw.keys()) - valid_fields)
-    if unknown:
-        unknown_str = ", ".join(unknown)
-        raise ValueError(f"Unknown config keys in {config_path}: {unknown_str}")
-
+def _validate_config_values(raw: dict) -> None:
     patience = raw.get("early_stopping_patience")
     if patience is not None and patience < 1:
         raise ValueError("early_stopping_patience must be >= 1 when set")
@@ -180,6 +168,56 @@ def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
     warmup_ratio = raw.get("warmup_ratio")
     if warmup_ratio is not None and not (0 <= warmup_ratio <= 1):
         raise ValueError("warmup_ratio must be between 0 and 1.")
+
+    eval_sample_size = raw.get("eval_sample_size")
+    if eval_sample_size is not None and (
+        not isinstance(eval_sample_size, int)
+        or isinstance(eval_sample_size, bool)
+        or eval_sample_size < 1
+    ):
+        raise ValueError("eval_sample_size must be a positive integer when set.")
+
+    eval_language_weights = raw.get("eval_language_sample_weights")
+    if eval_language_weights is None:
+        return
+
+    if eval_sample_size is None:
+        raise ValueError("eval_language_sample_weights requires eval_sample_size.")
+    if not isinstance(eval_language_weights, dict) or not eval_language_weights:
+        raise ValueError("eval_language_sample_weights must be a non-empty mapping.")
+
+    total_weight = 0.0
+    for language, weight in eval_language_weights.items():
+        if not str(language).strip():
+            raise ValueError("eval_language_sample_weights contains an empty language.")
+        if (
+            not isinstance(weight, (int, float))
+            or isinstance(weight, bool)
+            or weight < 0
+        ):
+            raise ValueError(
+                "eval_language_sample_weights values must be non-negative numbers."
+            )
+        total_weight += float(weight)
+
+    if total_weight <= 0:
+        raise ValueError("eval_language_sample_weights must sum to a positive value.")
+
+
+def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
+    config_path = Path(path)
+    with config_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    raw = _normalize_warmup_fields(raw)
+
+    valid_fields = set(config_cls.__dataclass_fields__.keys())
+    unknown = sorted(set(raw.keys()) - valid_fields)
+    if unknown:
+        unknown_str = ", ".join(unknown)
+        raise ValueError(f"Unknown config keys in {config_path}: {unknown_str}")
+
+    _validate_config_values(raw)
 
     return config_cls(**raw)
 
