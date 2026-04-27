@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import random
+import re
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -12,6 +16,7 @@ import yaml
 from datasets import Dataset, DatasetDict, load_from_disk
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor, set_seed
+from transformers.trainer_utils import EvalLoopOutput
 
 from train.config import LoraSFTTrainConfig, pretty_config
 from train.data import ensure_chat_template
@@ -150,6 +155,15 @@ def _build_arg_parser(
         help="Python format string with {language}, {iso_lang}, and {culture}.",
     )
     parser.add_argument(
+        "--eval-percentage",
+        type=float,
+        default=_config_default(defaults, "eval_percentage", None),
+        help=(
+            "Optional per-language fraction of captioning examples to hold out for "
+            "runtime evaluation. The held-out rows are removed from training."
+        ),
+    )
+    parser.add_argument(
         "--max-seq-length",
         type=int,
         default=_config_default(defaults, "max_seq_length", 4096),
@@ -208,6 +222,21 @@ def _build_arg_parser(
         "--save-total-limit",
         type=int,
         default=_config_default(defaults, "save_total_limit", 3),
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=_config_default(defaults, "early_stopping_patience", None),
+        help=(
+            "Stop after this many eval rounds without improving held-out "
+            "caption ChrF++."
+        ),
+    )
+    parser.add_argument(
+        "--early-stopping-threshold",
+        type=float,
+        default=_config_default(defaults, "early_stopping_threshold", None),
+        help="Minimum ChrF++ improvement required to reset early stopping patience.",
     )
     parser.add_argument(
         "--language-sampling-alpha",
@@ -330,6 +359,12 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--gradient-accumulation-steps must be at least 1.")
     if args.save_steps < 1:
         raise ValueError("--save-steps must be at least 1.")
+    if args.early_stopping_patience is not None and args.early_stopping_patience < 1:
+        raise ValueError("--early-stopping-patience must be at least 1 when provided.")
+    if args.early_stopping_threshold is not None and args.early_stopping_threshold < 0:
+        raise ValueError("--early-stopping-threshold must be non-negative when provided.")
+    if args.eval_percentage is not None and not 0 < args.eval_percentage < 1:
+        raise ValueError("--eval-percentage must be between 0 and 1 when provided.")
     if args.language_sampling_alpha < 0:
         raise ValueError("--language-sampling-alpha must be non-negative.")
     return args
@@ -436,6 +471,7 @@ def _prepare_captioning_dataset(
             ],
             "language": language,
             "iso_lang": str(example.get("iso_lang") or "").strip(),
+            "reference_caption": caption,
         }
 
     remove_columns = [column for column in dataset.column_names if column != "image"]
@@ -444,6 +480,72 @@ def _prepare_captioning_dataset(
         remove_columns=remove_columns,
         desc="Formatting captioning examples for VLM SFT",
     )
+
+
+def _split_train_eval_dataset(
+    dataset: Dataset,
+    *,
+    eval_percentage: float | None,
+    seed: int,
+    language_column: str = "language",
+) -> tuple[Dataset, Dataset | None, dict[str, Any]]:
+    if eval_percentage is None:
+        return dataset, None, {}
+    if language_column not in dataset.column_names:
+        available = ", ".join(dataset.column_names)
+        raise ValueError(
+            f"Missing language column '{language_column}' for eval split. "
+            f"Available: {available}"
+        )
+
+    language_to_indices: dict[str, list[int]] = defaultdict(list)
+    for index, language in enumerate(dataset[language_column]):
+        language_to_indices[str(language).strip()].append(index)
+
+    rng = random.Random(seed)
+    eval_indices: list[int] = []
+    eval_counts: dict[str, int] = {}
+    for language, indices in sorted(language_to_indices.items()):
+        if len(indices) < 2:
+            raise ValueError(
+                f"Cannot hold out eval examples for language {language!r}: "
+                "at least two rows are required."
+            )
+        eval_count = int(round(len(indices) * eval_percentage))
+        eval_count = max(1, eval_count)
+        if eval_count >= len(indices):
+            raise ValueError(
+                f"Eval percentage {eval_percentage:.4f} would leave no training rows "
+                f"for language {language!r}."
+            )
+        eval_counts[language] = eval_count
+        eval_indices.extend(rng.sample(indices, k=eval_count))
+
+    eval_index_set = set(eval_indices)
+    train_indices = [
+        index
+        for index in range(len(dataset))
+        if index not in eval_index_set
+    ]
+    rng.shuffle(train_indices)
+    rng.shuffle(eval_indices)
+
+    train_dataset = dataset.select(train_indices)
+    eval_dataset = dataset.select(eval_indices)
+    split_info = {
+        "eval_percentage": eval_percentage,
+        "eval_seed": seed,
+        "train_examples": len(train_dataset),
+        "eval_examples": len(eval_dataset),
+        "train_language_counts": dict(
+            sorted(Counter(train_dataset[language_column]).items())
+        ),
+        "eval_language_counts": dict(
+            sorted(Counter(eval_dataset[language_column]).items())
+        ),
+        "requested_eval_counts": eval_counts,
+    }
+    return train_dataset, eval_dataset, split_info
 
 
 def _build_config(args: argparse.Namespace) -> LoraSFTTrainConfig:
@@ -470,8 +572,8 @@ def _build_config(args: argparse.Namespace) -> LoraSFTTrainConfig:
         eval_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         save_only_model=True,
-        early_stopping_patience=None,
-        early_stopping_threshold=None,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_threshold=args.early_stopping_threshold,
         bf16=args.bf16,
         fp16=args.fp16,
         gradient_checkpointing=args.gradient_checkpointing,
@@ -485,6 +587,251 @@ def _build_config(args: argparse.Namespace) -> LoraSFTTrainConfig:
         seed=args.seed,
         report_to=args.report_to,
     )
+
+
+def _world_size() -> int:
+    for env_var in ("WORLD_SIZE", "LOCAL_WORLD_SIZE", "SLURM_GPUS_ON_NODE"):
+        raw_value = os.environ.get(env_var)
+        if raw_value:
+            try:
+                return max(int(raw_value), 1)
+            except ValueError:
+                continue
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible_devices:
+        visible_devices = [
+            device.strip()
+            for device in cuda_visible_devices.split(",")
+            if device.strip()
+        ]
+        if visible_devices:
+            return len(visible_devices)
+    raw_slurm_tasks = os.environ.get("SLURM_NTASKS")
+    if raw_slurm_tasks:
+        try:
+            return max(int(raw_slurm_tasks), 1)
+        except ValueError:
+            pass
+    return 1
+
+
+def _steps_per_epoch(
+    *,
+    num_train_examples: int,
+    per_device_train_batch_size: int,
+    gradient_accumulation_steps: int,
+) -> int:
+    per_rank_examples = math.ceil(num_train_examples / _world_size())
+    batches_per_rank = math.ceil(per_rank_examples / per_device_train_batch_size)
+    return max(math.ceil(batches_per_rank / gradient_accumulation_steps), 1)
+
+
+def _extract_assistant_response(text: str) -> str:
+    cleaned = text.strip()
+    if "<|assistant|>" in cleaned:
+        cleaned = cleaned.rsplit("<|assistant|>", maxsplit=1)[-1].strip()
+    if "<|CHATBOT_TOKEN|>" in cleaned:
+        cleaned = cleaned.rsplit("<|CHATBOT_TOKEN|>", maxsplit=1)[-1].strip()
+    if "<|START_RESPONSE|>" in cleaned:
+        cleaned = cleaned.rsplit("<|START_RESPONSE|>", maxsplit=1)[-1].strip()
+    for marker in ("<|END_RESPONSE|>", "<|END_OF_TURN_TOKEN|>", "<|START_OF_TURN_TOKEN|>"):
+        if marker in cleaned:
+            cleaned = cleaned.split(marker, maxsplit=1)[0].strip()
+    if "<|user|>" in cleaned:
+        cleaned = cleaned.split("<|user|>", maxsplit=1)[0].strip()
+    return cleaned
+
+
+def _clean_caption(text: str) -> str:
+    cleaned = _extract_assistant_response(text).strip()
+    cleaned = re.split(
+        r"\s*<\|(?:END|END_RESPONSE|END_OF_TURN_TOKEN|START_OF_TURN_TOKEN)",
+        cleaned,
+        maxsplit=1,
+    )[0]
+    cleaned = re.sub(r"\s*<\s*$", "", cleaned)
+    cleaned = re.sub(
+        r"^(predicted_caption|caption|pie de foto)\s*:\s*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _get_input_device(model: Any):
+    try:
+        return model.get_input_embeddings().weight.device
+    except AttributeError:
+        return next(model.parameters()).device
+
+
+def _move_inputs_to_device(inputs: Any, device: Any, dtype: Any) -> dict[str, Any]:
+    moved: dict[str, Any] = {}
+    for name, value in inputs.items():
+        if torch.is_tensor(value):
+            if value.is_floating_point():
+                moved[name] = value.to(device=device, dtype=dtype)
+            else:
+                moved[name] = value.to(device=device)
+        else:
+            moved[name] = value
+    return moved
+
+
+def _reference_caption(example: Mapping[str, Any]) -> str:
+    reference = str(example.get("reference_caption") or "").strip()
+    if reference:
+        return reference
+
+    completion = example.get("completion")
+    if isinstance(completion, list):
+        for message in completion:
+            if not isinstance(message, Mapping):
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, Mapping) and item.get("type") == "text":
+                        return str(item.get("text") or "").strip()
+    return ""
+
+
+class CaptioningChrFTrainer(MultilingualSFTTrainer):
+    def __init__(
+        self,
+        *args: Any,
+        caption_eval_dataset: Dataset | None = None,
+        caption_eval_max_new_tokens: int = 128,
+        **kwargs: Any,
+    ) -> None:
+        self.caption_eval_dataset = caption_eval_dataset
+        self.caption_eval_max_new_tokens = caption_eval_max_new_tokens
+        super().__init__(*args, **kwargs)
+
+    def evaluation_loop(
+        self,
+        dataloader: Any,
+        description: str,
+        prediction_loss_only: bool | None = None,
+        ignore_keys: list[str] | None = None,
+        metric_key_prefix: str = "eval",
+    ) -> EvalLoopOutput:
+        output = super().evaluation_loop(
+            dataloader,
+            description,
+            prediction_loss_only=prediction_loss_only,
+            ignore_keys=ignore_keys,
+            metric_key_prefix=metric_key_prefix,
+        )
+        if self.caption_eval_dataset is None or metric_key_prefix != "eval":
+            return output
+
+        metrics = dict(output.metrics or {})
+        metrics.update(self._compute_caption_chrf_metrics(metric_key_prefix))
+        return output._replace(metrics=metrics)
+
+    def _generation_model(self) -> Any:
+        wrapped_model = getattr(self, "model_wrapped", None)
+        if wrapped_model is not None and hasattr(wrapped_model, "generate"):
+            return wrapped_model
+        if wrapped_model is not None and hasattr(wrapped_model, "module"):
+            module = wrapped_model.module
+            if hasattr(module, "generate"):
+                return module
+
+        model = self.model
+        if hasattr(model, "generate"):
+            return model
+
+        accelerator = getattr(self, "accelerator", None)
+        if accelerator is not None:
+            unwrapped = accelerator.unwrap_model(model)
+            if hasattr(unwrapped, "generate"):
+                return unwrapped
+        return model
+
+    def _compute_caption_chrf_metrics(self, metric_key_prefix: str) -> dict[str, float]:
+        from sacrebleu.metrics import CHRF
+
+        dataset = self.caption_eval_dataset
+        if dataset is None or len(dataset) == 0:
+            return {}
+
+        model = self._generation_model()
+        processor = self.processing_class
+        tokenizer = getattr(processor, "tokenizer", None)
+        if tokenizer is None:
+            raise ValueError("Captioning ChrF++ eval requires a processor tokenizer.")
+
+        batch_size = max(int(getattr(self.args, "per_device_eval_batch_size", 1)), 1)
+        dtype = _resolve_dtype_from_args(self.args, model)
+        device = _get_input_device(model)
+
+        predictions: list[str] = []
+        references: list[str] = []
+        was_training = bool(getattr(model, "training", False))
+        model.eval()
+        try:
+            for start in range(0, len(dataset), batch_size):
+                examples = [
+                    dataset[index]
+                    for index in range(start, min(start + batch_size, len(dataset)))
+                ]
+                prompts = [
+                    processor.apply_chat_template(
+                        example["prompt"],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for example in examples
+                ]
+                images = [example["image"] for example in examples]
+                inputs = processor(
+                    images=images,
+                    text=prompts,
+                    return_tensors="pt",
+                    padding=True,
+                )
+                input_width = inputs["input_ids"].shape[1]
+                inputs = _move_inputs_to_device(inputs, device, dtype)
+
+                generation_kwargs: dict[str, Any] = {
+                    "max_new_tokens": self.caption_eval_max_new_tokens,
+                    "do_sample": False,
+                    "pad_token_id": tokenizer.pad_token_id,
+                    "eos_token_id": tokenizer.eos_token_id,
+                }
+                if _world_size() > 1:
+                    generation_kwargs["synced_gpus"] = True
+
+                with torch.no_grad():
+                    generated = model.generate(**inputs, **generation_kwargs)
+
+                for example, sequence in zip(examples, generated, strict=True):
+                    new_tokens = sequence[input_width:].detach().cpu()
+                    text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+                    predictions.append(_clean_caption(text))
+                    references.append(_reference_caption(example))
+        finally:
+            if was_training:
+                model.train()
+
+        chrf_pp = CHRF(word_order=2).corpus_score(predictions, [references]).score
+        return {
+            f"{metric_key_prefix}_chrf_pp": chrf_pp,
+        }
+
+
+def _resolve_dtype_from_args(args: Any, model: Any):
+    if getattr(args, "bf16", False):
+        return torch.bfloat16
+    if getattr(args, "fp16", False):
+        return torch.float16
+    try:
+        return next(model.parameters()).dtype
+    except StopIteration:
+        return torch.float32
 
 
 def _processor_load_path(model_name_or_path: str, model_load_path: str) -> str:
@@ -610,12 +957,27 @@ def main() -> None:
     cfg = _build_config(args)
     set_seed(cfg.seed)
 
-    train_dataset = _prepare_captioning_dataset(
+    dataset = _prepare_captioning_dataset(
         dataset_path=args.dataset_path,
         split=args.train_split,
         languages=args.languages,
         prompt_template=args.prompt_template,
     )
+    train_dataset, eval_dataset, split_info = _split_train_eval_dataset(
+        dataset,
+        eval_percentage=args.eval_percentage,
+        seed=cfg.seed,
+    )
+    if eval_dataset is not None:
+        cfg.eval_steps = _steps_per_epoch(
+            num_train_examples=len(train_dataset),
+            per_device_train_batch_size=cfg.per_device_train_batch_size,
+            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+        )
+        cfg.save_steps = cfg.eval_steps
+    else:
+        cfg.early_stopping_patience = None
+        cfg.early_stopping_threshold = None
 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -623,7 +985,11 @@ def main() -> None:
         **pretty_config(cfg),
         "captioning_languages": args.languages,
         "prompt_template": args.prompt_template,
+        "num_captioning_examples": len(dataset),
         "num_train_examples": len(train_dataset),
+        "num_eval_examples": len(eval_dataset) if eval_dataset is not None else 0,
+        "captioning_eval_metric": "chrf_pp" if eval_dataset is not None else None,
+        "runtime_eval_split": split_info,
     }
     with (output_dir / "resolved_config.json").open("w", encoding="utf-8") as f:
         json.dump(resolved_config, f, indent=2)
@@ -636,7 +1002,12 @@ def main() -> None:
                 "dataset_path": args.dataset_path,
                 "train_split": args.train_split,
                 "languages": args.languages,
+                "num_captioning_examples": len(dataset),
                 "num_train_examples": len(train_dataset),
+                "num_eval_examples": len(eval_dataset) if eval_dataset is not None else 0,
+                "eval_steps": cfg.eval_steps if eval_dataset is not None else None,
+                "eval_metric": "chrf_pp" if eval_dataset is not None else None,
+                "runtime_eval_split": split_info,
                 "output_dir": cfg.output_dir,
                 "dry_run": args.dry_run,
             },
@@ -647,8 +1018,11 @@ def main() -> None:
     if args.dry_run:
         return
 
-    has_eval = False
+    has_eval = eval_dataset is not None
     training_args = build_sft_args(cfg, has_eval=has_eval)
+    if has_eval:
+        training_args.metric_for_best_model = "eval_chrf_pp"
+        training_args.greater_is_better = True
 
     model_load_path = _resolve_model_load_path(cfg.model_name_or_path)
     processor = _load_processor(
@@ -677,7 +1051,7 @@ def main() -> None:
         "model": model,
         "args": training_args,
         "train_dataset": train_dataset,
-        "eval_dataset": None,
+        "eval_dataset": eval_dataset,
         "processing_class": processor,
         "train_sampler": train_sampler,
     }
@@ -685,7 +1059,10 @@ def main() -> None:
     if callbacks:
         trainer_kwargs["callbacks"] = callbacks
 
-    trainer = MultilingualSFTTrainer(**trainer_kwargs)
+    trainer = CaptioningChrFTrainer(
+        **trainer_kwargs,
+        caption_eval_dataset=eval_dataset,
+    )
     _ = deepspeed_init
 
     resume_checkpoint = _resolve_resume_checkpoint(output_dir)
