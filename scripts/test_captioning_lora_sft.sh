@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=captioning
-#SBATCH --output=logs/captioning_grpo_output.log
-#SBATCH --error=logs/captioning_grpo_error.log
+#SBATCH --job-name=test-captioning
+#SBATCH --output=logs/test_captioning_output.log
+#SBATCH --error=logs/test_captioning_error.log
 #SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G

@@ -34,7 +34,7 @@ from train.config import (
     _validate_config_values,
 )
 from train.data import ensure_chat_template, load_datasets, prepare_grpo_splits
-from train.grpo import (
+from train.grpo_common import (
     PatchedGRPOTrainer,
     _build_callbacks,
     _build_train_sampler,

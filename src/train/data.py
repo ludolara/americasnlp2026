@@ -72,7 +72,7 @@ def ensure_chat_template(
 ) -> PreTrainedTokenizerBase:
     if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
         raise ValueError(
-            "Tiny Aya formatting requires a tokenizer with `apply_chat_template`."
+            "Aya formatting requires a tokenizer with `apply_chat_template`."
         )
     if getattr(tokenizer, "chat_template", None):
         return tokenizer

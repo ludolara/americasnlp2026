@@ -9,7 +9,7 @@ import yaml
 
 @dataclass
 class DatasetConfigMixin:
-    model_name_or_path: str = "models/tiny-aya-base"
+    model_name_or_path: str = "models/aya-vision-32b"
     trust_remote_code: bool = True
 
     dataset_name: str | None = None
@@ -31,7 +31,7 @@ class DatasetConfigMixin:
 
 @dataclass
 class SFTTrainConfig(DatasetConfigMixin):
-    output_dir: str = "outputs/tiny-aya-full-sft"
+    output_dir: str = "outputs/aya-vision-32b-americas"
     max_seq_length: int = 2048
     packing: bool = False
     language_sampling_alpha: float = 1.0
@@ -92,7 +92,7 @@ class LoraSFTTrainConfig(SFTTrainConfig):
 
 @dataclass
 class GRPOTrainConfig(DatasetConfigMixin):
-    output_dir: str = "outputs/tiny-aya-full-grpo"
+    output_dir: str = "outputs/aya-vision-32b-americas-grpo"
     auto_resume_from_checkpoint: bool = True
     resume_from_checkpoint: str | None = None
     max_completion_length: int = 2048
@@ -222,20 +222,8 @@ def _load_config(path: str | Path, config_cls: type[ConfigT]) -> ConfigT:
     return config_cls(**raw)
 
 
-def load_sft_config(path: str | Path) -> SFTTrainConfig:
-    return _load_config(path, SFTTrainConfig)
-
-
-def load_full_sft_config(path: str | Path) -> SFTTrainConfig:
-    return load_sft_config(path)
-
-
 def load_lora_sft_config(path: str | Path) -> LoraSFTTrainConfig:
     return _load_config(path, LoraSFTTrainConfig)
-
-
-def load_grpo_config(path: str | Path) -> GRPOTrainConfig:
-    return _load_config(path, GRPOTrainConfig)
 
 
 def pretty_config(config: SFTTrainConfig | LoraSFTTrainConfig | GRPOTrainConfig) -> dict:

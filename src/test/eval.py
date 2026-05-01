@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-name-or-path",
         type=str,
-        default="outputs/tiny-aya-americas",
+        default="outputs/aya-vision-32b-americas",
         help="Path to the fine-tuned model or model id.",
     )
     parser.add_argument(
