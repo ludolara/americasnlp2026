@@ -1,4 +1,5 @@
-model_name_or_path: "outputs/aya-vision-32b-americas"
+# model_name_or_path: "outputs/aya-vision-32b-americas"
+model_name_or_path: "outputs/aya-vision-32b-americas-grpo/checkpoint-125"
 dataset_path: "data/captioning"
 train_split: "validation"
 languages:
@@ -6,7 +7,8 @@ languages:
   - "bribri"
   - "guarani"
   - "nahuatl"
-output_dir: "outputs/aya-vision-32b-americas-captioning"
+# output_dir: "outputs/aya-vision-32b-americas-captioning"
+output_dir: "outputs/aya-vision-32b-americas-grpo-captioning"
 prompt_template: "Escribe un solo pie de foto en {language} para esta imagen. Debe ser una descripcion culturalmente adecuada de la imagen. Responde solo con el pie de foto en {language}, sin explicaciones."
 eval_percentage: 0.1
 
@@ -27,7 +29,7 @@ early_stopping_patience: 2
 early_stopping_threshold: 0.001
 language_sampling_alpha: 1.0
 
-lora_r: 32
+lora_r: 64
 lora_alpha: 64
 lora_dropout: 0.1
 lora_bias: "none"

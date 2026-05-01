@@ -19,7 +19,7 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 source "$ROOT_DIR/wixarika/bin/activate"
 
-MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas-lora-grpo}"
+MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas-grpo/checkpoint-125}"
 DATASET_PATH="${DATASET_PATH:-data/americasnlp2026}"
 SPLIT="${SPLIT:-test}"
 BATCH_SIZE="${BATCH_SIZE:-512}"
@@ -30,6 +30,7 @@ NUM_EXAMPLES="${NUM_EXAMPLES:-10}"
 SHOW_EXAMPLES="${SHOW_EXAMPLES:-1}"
 LIMIT="${LIMIT:-}"
 EVAL_LANGUAGE="${EVAL_LANGUAGE:-}"
+# eval_lora filters by language_code: hch, bzd, gn, nah.
 EVAL_LANGUAGES_RAW="${EVAL_LANGUAGES:-hch,bzd,gn,nah}"
 EVAL_LANGUAGES_RAW="${EVAL_LANGUAGES_RAW//,/ }"
 read -r -a EVAL_LANGUAGE_LIST <<< "$EVAL_LANGUAGES_RAW"

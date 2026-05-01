@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=captioning
-#SBATCH --output=logs/v5/captioning_output.log
-#SBATCH --error=logs/v5/captioning_error.log
+#SBATCH --output=logs/captioning_grpo_output.log
+#SBATCH --error=logs/captioning_grpo_error.log
 #SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
@@ -19,7 +19,7 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-MODEL_PATH="${MODEL_PATH:-outputs/v5/aya-vision-32b-americas-captioning}"
+MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas-grpo-captioning}"
 if [[ "$#" -gt 0 ]]; then
   MODEL_PATH="$1"
   shift
@@ -30,7 +30,7 @@ SPLIT="${SPLIT:-test}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-128}"
 DTYPE="${DTYPE:-bfloat16}"
-OUTPUT_DIR="${OUTPUT_DIR:-results/v5/captioning}"
+OUTPUT_DIR="${OUTPUT_DIR:-results/captioning}"
 TEAM_NAME="${TEAM_NAME:-Mila}"
 VERSION="${VERSION:-0}"
 LIMIT="${LIMIT:-}"

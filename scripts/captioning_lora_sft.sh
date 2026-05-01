@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=captioning_lora_sft
-#SBATCH --output=logs/captioning_lora_sft_output.log
-#SBATCH --error=logs/captioning_lora_sft_error.log
+#SBATCH --job-name=captioning_lora_grpo
+#SBATCH --output=logs/captioning_lora_grpo_output.log
+#SBATCH --error=logs/captioning_lora_grpo_error.log
 #SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G

@@ -36,9 +36,9 @@ lr_scheduler_type: "linear"
 logging_steps: 25
 save_steps: 25
 eval_steps: 25
-save_total_limit: 5
+save_total_limit: 3
 save_only_model: false
-early_stopping_patience: 5
+early_stopping_patience: 3
 early_stopping_threshold: 0.0005
 
 bf16: true
