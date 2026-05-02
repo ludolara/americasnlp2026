@@ -19,7 +19,7 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 source "$ROOT_DIR/wixarika/bin/activate"
 
-MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas-grpo-captioning}"
+MODEL_PATH="${MODEL_PATH:-outputs/aya-vision-32b-americas-captioning}"
 if [[ "$#" -gt 0 ]]; then
   MODEL_PATH="$1"
   shift
