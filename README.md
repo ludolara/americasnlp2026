@@ -1,4 +1,10 @@
-# Aya Vision Americas
+# Mila's Submission — AmericasNLP 2026
+
+<!-- Replace the arXiv placeholder below once the paper is public. -->
+[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](#)
+[![HF Model: SFT(MT)](https://img.shields.io/badge/HF%20Model-MT%20SFT-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas)
+[![HF Model: SFT(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-Captioning%20SFT-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-captioning)
+[![HF Model: SFT(MT) + RLVR(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-GRPO%20Captioning-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-grpo-captioning)
 
 This repository contains the Mila entry code for the
 [AmericasNLP 2026 Shared Task: Cultural Image Captioning for Indigenous Languages](https://turing.iimas.unam.mx/americasnlp/2026_st.html).
@@ -104,6 +110,30 @@ The default artifact flow is:
 To train captioning directly from the MT SFT adapter instead of the GRPO
 checkpoint, update `model_name_or_path` and `output_dir` in
 `configs/captioning_lora_sft.yaml`.
+
+### Upload trained adapters to Hugging Face
+
+Upload the three main adapter outputs as Hugging Face **model** repositories:
+
+```bash
+./wixarika/bin/python scripts/upload_models_to_hf.py --dry-run
+./wixarika/bin/python scripts/upload_models_to_hf.py
+```
+
+By default, the script:
+
+- uploads `aya-vision-32b-americas`,
+  `aya-vision-32b-americas-captioning`, and
+  `aya-vision-32b-americas-grpo-captioning`;
+- creates repos under the authenticated Hugging Face account name;
+- uploads only the final adapter artifacts, not `checkpoint-*` directories;
+- rewrites the staged Hub metadata to point at `CohereLabs/aya-vision-32b`
+  instead of the local training path `models/aya-vision-32b`.
+
+Use `--namespace ORG_OR_USER` to target a different namespace, `--private` for
+private repos, or `--include-checkpoints` if you intentionally want the
+intermediate checkpoints uploaded too. The script uses `HF_TOKEN` when present
+or the token from `hf auth login`.
 
 ## MT Evaluation Helpers
 
