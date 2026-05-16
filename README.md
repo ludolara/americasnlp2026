@@ -2,9 +2,9 @@
 
 <!-- Replace the arXiv placeholder below once the paper is public. -->
 [![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](#)
-[![HF Model: SFT(MT)](https://img.shields.io/badge/HF%20Model-MT%20SFT-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas)
-[![HF Model: SFT(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-Captioning%20SFT-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-captioning)
-[![HF Model: SFT(MT) + RLVR(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-GRPO%20Captioning-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-grpo-captioning)
+[![HF Model: SFT(MT)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas)
+[![HF Model: SFT(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29%20%2B%20SFT%28IC%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-captioning)
+[![HF Model: SFT(MT) + RLVR(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29%20%2B%20RLVR%28MT%29%20%2B%20SFT%28IC%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-grpo-captioning)
 
 This repository contains the Mila entry code for the
 [AmericasNLP 2026 Shared Task: Cultural Image Captioning for Indigenous Languages](https://turing.iimas.unam.mx/americasnlp/2026_st.html).
