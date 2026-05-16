@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from train.constants import SPANISH_LANGUAGE_NAME
 from train.data import ensure_chat_template, format_translation_prompt
 from test.eval import (
     build_per_language_summary,
@@ -65,6 +66,14 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="target",
         help="Reference text column name.",
+    )
+    parser.add_argument(
+        "--reverse-direction",
+        action="store_true",
+        help=(
+            "Evaluate target-column -> source-column. Prompts use each row's "
+            "language as the source language and Spanish as the target language."
+        ),
     )
     parser.add_argument(
         "--max-new-tokens",
@@ -289,6 +298,7 @@ def _build_run_identity(args: argparse.Namespace) -> dict[str, Any]:
         "languages": args.languages,
         "source_column": args.source_column,
         "target_column": args.target_column,
+        "reverse_direction": args.reverse_direction,
         "max_new_tokens": args.max_new_tokens,
         "generation_budget": args.generation_budget,
         "dtype": args.dtype,
@@ -311,9 +321,11 @@ def _build_run_dir(args: argparse.Namespace) -> Path:
     language_slug = _slugify_path_component(
         "-".join(args.languages) if args.languages else "all"
     )
+    direction_slug = "xxx-to-spa" if args.reverse_direction else "spa-to-xxx"
     run_name = (
         f"{model_slug}__{dataset_slug}__{args.split}"
-        f"__langs-{language_slug}__gb-{args.generation_budget}__{digest}"
+        f"__dir-{direction_slug}__langs-{language_slug}"
+        f"__gb-{args.generation_budget}__{digest}"
     )
     return args.results_dir / run_name
 
@@ -786,6 +798,7 @@ def _write_scored_outputs(
             "split": args.split,
             "generation_budget": args.generation_budget,
             "score_budgets": args.score_budgets,
+            "reverse_direction": args.reverse_direction,
             "dtype": args.dtype,
             "evaluations": [
                 {
@@ -850,20 +863,35 @@ def main() -> None:
     if len(split_dataset) == 0:
         raise ValueError(f"Split '{args.split}' is empty; nothing to score.")
 
-    sources = [str(value).strip() for value in split_dataset[args.source_column]]
-    references = [str(value).strip() for value in split_dataset[args.target_column]]
     tokenizer = load_tokenizer(args.model_name_or_path)
-    target_names = [str(value).strip() for value in split_dataset["language"]]
-    if any(not target_name for target_name in target_names):
+    dataset_languages = [str(value).strip() for value in split_dataset["language"]]
+    if any(not language for language in dataset_languages):
         raise ValueError("All rows must include a non-empty `language` value.")
+
+    if args.reverse_direction:
+        sources = [str(value).strip() for value in split_dataset[args.target_column]]
+        references = [str(value).strip() for value in split_dataset[args.source_column]]
+        source_names = dataset_languages
+        prompt_target_names = [SPANISH_LANGUAGE_NAME] * len(dataset_languages)
+    else:
+        sources = [str(value).strip() for value in split_dataset[args.source_column]]
+        references = [str(value).strip() for value in split_dataset[args.target_column]]
+        source_names = [SPANISH_LANGUAGE_NAME] * len(dataset_languages)
+        prompt_target_names = dataset_languages
 
     prompts = [
         format_translation_prompt(
             source,
             target_name,
             tokenizer,
+            source_name=source_name,
         )
-        for source, target_name in zip(sources, target_names, strict=True)
+        for source, source_name, target_name in zip(
+            sources,
+            source_names,
+            prompt_target_names,
+            strict=True,
+        )
     ]
 
     run_dir = _build_run_dir(args)
@@ -881,6 +909,7 @@ def main() -> None:
                 "batch_size": args.batch_size,
                 "generation_budget": args.generation_budget,
                 "score_budgets": args.score_budgets,
+                "reverse_direction": args.reverse_direction,
                 "prompt_batches": prompt_batches,
                 "expected_generation_tasks": prompt_batches * args.generation_budget,
                 "results_dir": str(run_dir),
@@ -897,7 +926,7 @@ def main() -> None:
         prompts=prompts,
         sources=sources,
         references=references,
-        languages=target_names,
+        languages=dataset_languages,
         batch_size=args.batch_size,
         max_new_tokens=args.max_new_tokens,
         generation_budget=args.generation_budget,
@@ -927,7 +956,7 @@ def main() -> None:
         records = build_records(
             sources,
             references,
-            target_names,
+            dataset_languages,
             budget_prediction_candidates,
         )
         evaluation_results.append(
@@ -962,6 +991,7 @@ def main() -> None:
                 "split": args.split,
                 "generation_budget": args.generation_budget,
                 "score_budgets": args.score_budgets,
+                "reverse_direction": args.reverse_direction,
                 "dtype": args.dtype,
                 "evaluations": [
                     {
