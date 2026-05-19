@@ -248,3 +248,22 @@ data/captioning
 
 Raw `dev` becomes the `validation` split for captioning SFT. Raw `test` becomes
 the `test` split for submission generation.
+
+## Citation
+
+```bibtex
+@inproceedings{lara-st-americasnlp-2026,
+  title = "From Machine Translation to Image Captioning: Training Vision-Language Models for {I}ndigenous Languages of the {A}mericas",
+  author = {Lara, Luis and
+  Raval, Param},
+  booktitle = "Proceedings of the Sixth Workshop on NLP for Indigenous Languages of the Americas (AmericasNLP)",
+  month = jul,
+  year = "2026",
+  address = "San Diego, California",
+  publisher = "Association for Computational Linguistics",
+}
+```
+
+## Acknowledgements 
+
+We thank the AmericasNLP 2026 organizers for preparing and releasing the Cultural Image Captioning shared-task data and evaluation setup. We also acknowledge Cohere For AI and Cohere Labs for releasing Aya Vision, which served as the base vision-language model in our experiments. We are grateful to the creators of the machine-translation resources used in this work, including Axolotl for Spanish--Nahuatl (Gutiérrez-Vásques et al., 2016), the Wixárika resource derived from Mager et al. (2018), the Guaraní--Spanish corpus by Chiruzzo et al. (2020), the Bribri resource by Feldman and Coto-Solano (2020), and the AmericasNLP 2025 ST1 data following De Gibert et al. (2025) and De Gibert et al. (2023).
