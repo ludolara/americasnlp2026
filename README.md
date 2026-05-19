@@ -43,39 +43,12 @@ The default configs expect the Aya Vision backbone at:
 models/aya-vision-32b
 ```
 
-## Repository Layout
-
-```text
-configs/
-  lora_sft.yaml                 # MT LoRA SFT config
-  lora_grpo.yaml                # optional MT GRPO refinement config
-  captioning_lora_sft.yaml      # final captioning LoRA SFT config
-  deepspeed_lora_zero3.json     # DeepSpeed ZeRO-3 config
-
-scripts/
-  build_americasnlp2026_hf.py   # raw MT files -> data/americasnlp2026
-  build_captioning_hf.py        # raw captioning files -> data/captioning
-  lora_sft.sh                   # Slurm/local wrapper for MT SFT
-  lora_grpo.sh                  # Slurm/local wrapper for MT GRPO
-  captioning_lora_sft.sh        # Slurm/local wrapper for captioning SFT
-  test_captioning_lora_sft.sh   # submission generation wrapper
-
-src/train/
-  lora_sft.py                   # MT SFT entrypoint
-  lora_grpo.py                  # MT GRPO entrypoint
-  captioning_lora_sft.py        # captioning SFT entrypoint
-
-src/test/
-  eval_lora.py                  # MT generation/evaluation
-  captioning.py                 # captioning submission generation
-```
-
 Large artifacts are expected to live outside git under `data/`, `models/`,
 `outputs/`, and `results/`.
 
 ## Training
 
-### 1. MT LoRA SFT
+### 1. Machine Translation LoRA SFT
 
 On Slurm:
 
@@ -86,7 +59,7 @@ sbatch scripts/lora_sft.sh
 The wrapper trains the MT SFT adapter, then submits MT evaluation jobs and the
 GRPO follow-up job.
 
-### 2. Optional MT GRPO
+### 2. Optional Machine Translation RLVR
 
 Run this stage after `outputs/aya-vision-32b-americas` exists:
 
@@ -96,6 +69,12 @@ sbatch scripts/lora_grpo.sh
 
 This stage uses `data/americasnlp2026`, samples languages with
 `language_sampling_alpha`, and evaluates on ChrF++ during training.
+
+### 3. Image Captioning LoRA SFT
+
+```bash
+sbatch scripts/captioning_lora_sft.sh
+```
 
 ## Model Artifacts
 
@@ -110,72 +89,6 @@ The default artifact flow is:
 To train captioning directly from the MT SFT adapter instead of the GRPO
 checkpoint, update `model_name_or_path` and `output_dir` in
 `configs/captioning_lora_sft.yaml`.
-
-### Upload trained adapters to Hugging Face
-
-Upload the three main adapter outputs as Hugging Face **model** repositories:
-
-```bash
-./wixarika/bin/python scripts/upload_models_to_hf.py --dry-run
-./wixarika/bin/python scripts/upload_models_to_hf.py
-```
-
-By default, the script:
-
-- uploads `aya-vision-32b-americas`,
-  `aya-vision-32b-americas-captioning`, and
-  `aya-vision-32b-americas-grpo-captioning`;
-- creates repos under the authenticated Hugging Face account name;
-- uploads only the final adapter artifacts, not `checkpoint-*` directories;
-- rewrites the staged Hub metadata to point at `CohereLabs/aya-vision-32b`
-  instead of the local training path `models/aya-vision-32b`.
-
-Use `--namespace ORG_OR_USER` to target a different namespace, `--private` for
-private repos, or `--include-checkpoints` if you intentionally want the
-intermediate checkpoints uploaded too. The script uses `HF_TOKEN` when present
-or the token from `hf auth login`.
-
-## MT Evaluation Helpers
-
-Translation adapters can be evaluated with:
-
-```bash
-bash scripts/test_lora_sft.sh
-bash scripts/test_lora_grpo.sh
-```
-
-Both wrappers call `python -m test.eval_lora` and support language filters such
-as:
-
-```bash
-EVAL_LANGUAGE=hch bash scripts/test_lora_sft.sh
-EVAL_LANGUAGES=hch,bzd,gn,nah bash scripts/test_lora_grpo.sh
-```
-
-Captioning SFT can run a small held-out validation evaluation by setting
-`eval_percentage` in `configs/captioning_lora_sft.yaml`.
-
-## Captioning Test Evaluation and Submission
-
-Run the final captioning adapter on the official captioning `test` split and
-write the shared-task JSONL files:
-
-```bash
-LANGUAGES=wixarika,bribri,guarani,nahuatl \
-TEAM_NAME=Mila \
-VERSION=0 \
-bash scripts/test_captioning_lora_sft.sh
-```
-
-For a quick test run:
-
-```bash
-LIMIT=10 bash scripts/test_captioning_lora_sft.sh
-```
-
-The script resumes from `results/captioning/predictions.checkpoint.jsonl`,
-writes per-language files under `results/captioning/submission/`, and creates
-`results/captioning/Mila.zip`.
 
 ## Data
 
