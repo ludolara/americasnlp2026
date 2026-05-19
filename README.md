@@ -252,7 +252,7 @@ the `test` split for submission generation.
 ## Citation
 
 ```bibtex
-@inproceedings{lara-st-americasnlp-2026,
+@inproceedings{lara-americasnlp-2026,
   title = "From Machine Translation to Image Captioning: Training Vision-Language Models for {I}ndigenous Languages of the {A}mericas",
   author = {Lara, Luis and
   Raval, Param},
