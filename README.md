@@ -165,15 +165,27 @@ the `test` split for submission generation.
 ## Citation
 
 ```bibtex
-@inproceedings{lara-americasnlp-2026,
-  title = "From Machine Translation to Image Captioning: Training Vision-Language Models for {I}ndigenous Languages of the {A}mericas",
-  author = {Lara, Luis and
-  Raval, Param},
-  booktitle = "Proceedings of the Sixth Workshop on NLP for Indigenous Languages of the Americas (AmericasNLP)",
-  month = jul,
-  year = "2026",
-  address = "San Diego, California",
-  publisher = "Association for Computational Linguistics",
+@inproceedings{lara-raval-2026-machine,
+    title = "From Machine Translation to Image Captioning: Training Vision-Language Models for Indigenous Languages of the {A}mericas",
+    author = "Lara, Luis  and
+      Raval, Param",
+    editor = "Mager, Manuel  and
+      Ebrahimi, Abteen  and
+      Bui, Minh Duc  and
+      Pugh, Robert  and
+      Oncevay, Arturo  and
+      Chiruzzo, Luis  and
+      Solano, Rolando Coto  and
+      Rijhwani, Shruti  and
+      Von Der Wense, Katharina",
+    booktitle = "Proceedings of the Sixth Workshop on {NLP} for Indigenous Languages of the {A}mericas ({A}mericas{NLP})",
+    month = jul,
+    year = "2026",
+    address = "San Diego, California, USA",
+    publisher = "Association for Computational Linguistics",
+    url = "https://preview.aclanthology.org/ingest-acl-workshops/2026.americasnlp-6.20/",
+    pages = "224--235",
+    ISBN = "979-8-89176-415-6"
 }
 ```
 
