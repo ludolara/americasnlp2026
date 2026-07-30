@@ -1,7 +1,7 @@
 # Mila's Submission — AmericasNLP 2026
 
 <!-- Replace the arXiv placeholder below once the paper is public. -->
-[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)](#)
+[![ACL Anthology](https://img.shields.io/badge/ACL%20Anthology-AmericasNLP%202026-blue.svg)](https://aclanthology.org/2026.americasnlp-6.20/)
 [![HF Model: SFT(MT)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas)
 [![HF Model: SFT(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29%20%2B%20SFT%28IC%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-captioning)
 [![HF Model: SFT(MT) + RLVR(MT) + SFT(IC)](https://img.shields.io/badge/HF%20Model-SFT%28MT%29%20%2B%20RLVR%28MT%29%20%2B%20SFT%28IC%29-FFD21E.svg)](https://huggingface.co/ludolara/aya-vision-32b-americas-grpo-captioning)
